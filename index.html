@@ -409,6 +409,177 @@ function wireBrandCard(){
   };
 }
 
+/* ---------------------------------------------------------------------
+   CLUB RULES — what each club switches on and how its rules behave.
+   Stored in the club's settings (state.settings.rules). Anything not set
+   falls back to the defaults below, which match the original club.
+   --------------------------------------------------------------------- */
+const DEFAULT_RULES = {
+  features:{ b2s:true, funeral:true, attendance:true, loans:true, penalties:true, poolCharge:true, bankAudit:true },
+  blockB2sLoans:true,           // members who pay no monthly contribution cannot take loans
+  payoutPct:80,                 // % of a resigning member's balance that is paid out; the club keeps the rest
+  labels:{ b2s:'Back 2 School', b2sShort:'B2S', funeral:'Funeral Fund' },
+};
+function rules(){
+  const r = (state.settings && state.settings.rules) || {};
+  return {
+    features: Object.assign({}, DEFAULT_RULES.features, r.features||{}),
+    blockB2sLoans: r.blockB2sLoans === undefined ? DEFAULT_RULES.blockB2sLoans : !!r.blockB2sLoans,
+    payoutPct: (isFinite(Number(r.payoutPct)) && Number(r.payoutPct) >= 0 && Number(r.payoutPct) <= 100 && r.payoutPct !== '' && r.payoutPct !== undefined && r.payoutPct !== null) ? Number(r.payoutPct) : DEFAULT_RULES.payoutPct,
+    labels: Object.assign({}, DEFAULT_RULES.labels, r.labels||{}),
+  };
+}
+function feat(name){ return rules().features[name] !== false; }
+function payoutPct(){ return rules().payoutPct; }
+function payoutFrac(){ return rules().payoutPct/100; }
+
+const RULE_TEMPLATES = [
+  { id:'classic', name:'Savings, loans, penalties and funds', blurb:'Everything switched on. How the original club runs.',
+    rules:{ features:{b2s:true,funeral:true,attendance:true,loans:true,penalties:true,poolCharge:true,bankAudit:true}, blockB2sLoans:true, payoutPct:80 } },
+  { id:'loans', name:'Savings with loans', blurb:'Contributions, loans, interest and penalties. No special funds or attendance.',
+    rules:{ features:{b2s:false,funeral:false,attendance:false,loans:true,penalties:true,poolCharge:true,bankAudit:true}, blockB2sLoans:true, payoutPct:100 } },
+  { id:'simple', name:'Simple savings', blurb:'Only monthly contributions and the year-end payout. No loans or penalties.',
+    rules:{ features:{b2s:false,funeral:false,attendance:false,loans:false,penalties:false,poolCharge:false,bankAudit:true}, blockB2sLoans:true, payoutPct:100 } },
+];
+
+// Hides what a club has switched off and shows its own names for the funds.
+// Runs after every screen is drawn, so the many tables and totals need no edits.
+const RULE_HIDE_COLS = {
+  b2s:['B2S'], funeral:['Funeral'],
+  loans:['Loan','Loan Repaid','Loan Repayment','Loan Rep','Interest Accrued','Interest Paid','Int Paid','Total Owing','95% Alloc','Principal Outstanding','Loan Deducted'],
+  penalties:['Penalties Paid','Penalty Owing','Penalties Owed','Pena','Penalties'],
+  poolCharge:['Pool Charge','Pool Share'],
+};
+const RULE_HIDE_ROWS = {
+  b2s:['Back 2 School fund','B2S accumulated','B2S-only members'],
+  funeral:['Funeral fund'],
+  loans:['Principal outstanding','Interest outstanding','Total loan book','Loans issued (out)','Loan repayments','Interest paid'],
+  penalties:['Penalties paid','Penalties still owed','Members with penalties owed'],
+  poolCharge:['Year-end pool charges','5% pool per active member'],
+};
+function applyRuleDom(){
+  try{
+    const root = document.getElementById('app'); if(!root || !root.querySelectorAll) return;
+    const off = Object.keys(RULE_HIDE_COLS).filter(k => !feat(k));
+    off.forEach(k => {
+      root.querySelectorAll('table').forEach(tbl => {
+        const ths = tbl.querySelectorAll('thead th, tr th'); if(!ths || !ths.length) return;
+        const heads = Array.from(ths);
+        heads.forEach((th, i) => {
+          const t = String(th.textContent||'').replace(/\s+/g,' ').trim();
+          if(!RULE_HIDE_COLS[k].includes(t)) return;
+          const idx = Array.prototype.indexOf.call(th.parentElement.children, th);
+          tbl.querySelectorAll('tr').forEach(tr => {
+            const cells = tr.children; if(!cells || cells.length <= idx) return;
+            if(Array.from(cells).some(c => c.colSpan > 1)) return;
+            cells[idx].style.display = 'none';
+          });
+        });
+      });
+    });
+    Object.keys(RULE_HIDE_ROWS).filter(k => !feat(k)).forEach(k => {
+      root.querySelectorAll('tr').forEach(tr => {
+        const first = tr.children && tr.children[0]; if(!first) return;
+        if(RULE_HIDE_ROWS[k].includes(String(first.textContent||'').trim())) tr.style.display = 'none';
+      });
+      root.querySelectorAll('.kpi').forEach(el => {
+        const l = el.querySelector('.l'); if(l && RULE_HIDE_ROWS[k].includes(String(l.textContent||'').trim())) el.style.display = 'none';
+      });
+    });
+    const L = rules().labels, D = DEFAULT_RULES.labels;
+    if(L.b2s !== D.b2s || L.b2sShort !== D.b2sShort || L.funeral !== D.funeral){
+      const walker = document.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
+      const todo = []; let n; while((n = walker.nextNode())) todo.push(n);
+      todo.forEach(node => {
+        let t = node.nodeValue; if(!t || !/B2S|Back 2 School|Funeral/.test(t)) return;
+        if(labelDone.get(node) === t) return;   // already renamed; do not rename twice
+        const o = t;
+        t = t.replace(/Back 2 School \(B2S\)/g, L.b2s).replace(/Back 2 School fund/gi, L.b2s).replace(/Back 2 School/g, L.b2s).replace(/\bB2S\b/g, L.b2sShort).replace(/Funeral fund/gi, L.funeral).replace(/\bFuneral\b/g, L.funeral);
+        if(t !== o){ node.nodeValue = t; labelDone.set(node, t); }
+      });
+    }
+  }catch(e){ console.error('rule display pass failed', e); }
+}
+const labelDone = new WeakMap();
+let ruleObs = null;
+function startRuleObserver(){
+  if(ruleObs || typeof MutationObserver === 'undefined') return;
+  const root = document.getElementById('app'); if(!root) return;
+  let busy = false;
+  ruleObs = new MutationObserver(() => {
+    if(busy) return; busy = true;
+    setTimeout(() => { ruleObs.disconnect(); applyRuleDom(); ruleObs.observe(root, {childList:true, subtree:true}); busy = false; }, 0);
+  });
+  ruleObs.observe(root, {childList:true, subtree:true});
+}
+
+let rulesDraft = null;
+function rulesCardHtml(){
+  const R = rulesDraft || rules();
+  const F = R.features;
+  const chk = (key, label, hint) => `<label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;margin:6px 0"><input type="checkbox" data-feat="${key}" ${F[key]!==false?'checked':''} style="margin-top:3px"><span><b>${label}</b><br><span class="hint">${hint}</span></span></label>`;
+  return `
+  <div class="card" id="rulesCard">
+    <h2><span class="dot"></span>Features &amp; rules</h2>
+    <p class="sub">Switch on what your club uses and hide the rest. Switched-off parts disappear from the screens and stop being calculated. Amounts such as penalties and interest are set in the next card.</p>
+    <label>Start from a template <span class="hint">sets the switches below, then you can fine-tune</span></label>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 14px">
+      ${RULE_TEMPLATES.map(t => `<button type="button" class="btn secondary sm" data-ruletpl="${t.id}" title="${escapeHtml(t.blurb)}">${escapeHtml(t.name)}</button>`).join('')}
+    </div>
+    <div class="grid g2">
+      <div>
+        ${chk('loans','Loans &amp; interest','Members can borrow from the club and pay interest.')}
+        ${chk('penalties','Penalties','Late and missed contributions, and attendance fines.')}
+        ${chk('poolCharge','Year-end pool charge','Members who paid no interest still add to the shared pool.')}
+        ${chk('attendance','Attendance','Record meetings and fine absences.')}
+      </div>
+      <div>
+        ${chk('b2s','First savings fund (Back 2 School)','A separate fund paid out at year-end.')}
+        ${chk('funeral','Second savings fund (Funeral)','A separate fund for funeral costs.')}
+        ${chk('bankAudit','Bank audit','Record bank visits and signatories.')}
+      </div>
+    </div>
+    <div class="grid g3" style="margin-top:12px">
+      <div><label>Resignation payout <span class="hint">% of a leaving member's balance they receive</span></label><input type="number" id="rulePayout" min="0" max="100" step="1" value="${R.payoutPct}"></div>
+      <div><label>Loans for members with no monthly contribution</label>
+        <select id="ruleB2sLoans"><option value="1" ${R.blockB2sLoans?'selected':''}>Not allowed</option><option value="0" ${!R.blockB2sLoans?'selected':''}>Allowed</option></select></div>
+    </div>
+    <div class="grid g3" style="margin-top:12px">
+      <div><label>First fund name</label><input type="text" id="ruleLblB2s" value="${escapeHtml(R.labels.b2s)}"></div>
+      <div><label>First fund short name</label><input type="text" id="ruleLblB2sShort" value="${escapeHtml(R.labels.b2sShort)}" maxlength="12"></div>
+      <div><label>Second fund name</label><input type="text" id="ruleLblFuneral" value="${escapeHtml(R.labels.funeral)}"></div>
+    </div>
+    <div class="btnrow" style="margin-top:14px"><button class="btn" id="rulesSaveBtn">Save features &amp; rules</button></div>
+  </div>`;
+}
+function wireRulesCard(){
+  const readForm = () => {
+    const g = id => document.getElementById(id);
+    const features = {}; document.querySelectorAll('[data-feat]').forEach(c => { features[c.dataset.feat] = !!c.checked; });
+    return {
+      features,
+      blockB2sLoans: g('ruleB2sLoans').value === '1',
+      payoutPct: Math.max(0, Math.min(100, Number(g('rulePayout').value))),
+      labels: { b2s: (g('ruleLblB2s').value.trim() || DEFAULT_RULES.labels.b2s), b2sShort: (g('ruleLblB2sShort').value.trim() || DEFAULT_RULES.labels.b2sShort), funeral: (g('ruleLblFuneral').value.trim() || DEFAULT_RULES.labels.funeral) },
+    };
+  };
+  document.querySelectorAll('[data-ruletpl]').forEach(b => b.onclick = async () => {
+    const t = RULE_TEMPLATES.find(x => x.id === b.dataset.ruletpl); if(!t) return;
+    const keep = readForm();
+    rulesDraft = Object.assign({}, keep, {features:Object.assign({}, t.rules.features), blockB2sLoans:t.rules.blockB2sLoans, payoutPct:t.rules.payoutPct});
+    const card = document.getElementById('rulesCard'); if(card){ card.outerHTML = rulesCardHtml(); wireRulesCard(); }
+    toast('Template applied. Press Save to keep it.');
+  });
+  const sv = document.getElementById('rulesSaveBtn');
+  if(sv) sv.onclick = async () => {
+    const r = readForm();
+    if(!isFinite(r.payoutPct)){ toast('Enter a payout between 0 and 100.', true); return; }
+    state.settings.rules = r; rulesDraft = null;
+    await saveSettingsCloud();
+    toast('Features & rules saved.'); render();
+  };
+}
+
 function settingsId(){ return 'main'; }   // one settings row per club: the database keys it by (club_id, id)
 function uid(prefix){ return prefix + Math.random().toString(36).slice(2,10); }
 function fmtR(n){
@@ -896,6 +1067,7 @@ function computeMemberRow(member){
 // eligible for a share of it — this charge is what guarantees that. B2S-only
 // members are always exempt.
 function qualifiesForPoolCharge(row){
+  if(!feat('poolCharge') || !feat('loans')) return false;
   if(Number(row.member.fixed) === 0) return false;
   const alreadyCharged = row.poolChg > 0;
   return row.interestPaid <= 0 && !alreadyCharged;
@@ -997,6 +1169,7 @@ function contributionTiming(month, dateStr){
 }
 
 function computeAutoPenalty(member, contrAmount, payDateStr, loanBalance, intPayAmount, hasAnyActivity, month, isAdvance){
+  if(!feat('penalties')) return {amount:0, reason:''};          // this club has no penalties
   if(Number(member.fixed) === 0) return {amount:0, reason:''}; // B2S exempt
   if(isNoPenaltyMonth(month)) return {amount:0, reason:''};     // the club's penalty-free month
   // If this member+month already has a penalty on record (e.g. applied earlier by
@@ -1025,6 +1198,7 @@ function computeAutoPenalty(member, contrAmount, payDateStr, loanBalance, intPay
 }
 
 function computeAttendancePenalty(member, status, apology){
+  if(!feat('penalties') || !feat('attendance')) return 0;
   if(Number(member.fixed) === 0) return 0; // B2S exempt
   status = (status||'').toLowerCase();
   apology = (apology||'').toLowerCase();
@@ -1040,7 +1214,7 @@ function computeAttendancePenalty(member, status, apology){
    time after the 10th and everyone still missing gets the "missed" tier).
    --------------------------------------------------------------------- */
 function scanPenaltySweep(month){
-  if(isNoPenaltyMonth(month)) return []; // the club's penalty-free month
+  if(isNoPenaltyMonth(month) || !feat('penalties')) return []; // penalty-free month, or a club with no penalties
   const today = todayISO();
   const results = [];
   for(const member of activeMembers()){
@@ -1135,8 +1309,10 @@ function checkLoan(memberFull, amount, pendingExtra){
     if(after > Number(ex.maxTotal) + 0.005){
       res.problems.push(`Even with the approved exception (up to ${fmtR(ex.maxTotal)} outstanding), this loan would take them to ${fmtR(after)}.`);
     }
-  } else if(Number(member.fixed) === 0){
-    res.problems.push('B2S-only members cannot take loans.');
+  } else if(!feat('loans')){
+    res.problems.push('Loans are switched off for this club.');
+  } else if(Number(member.fixed) === 0 && rules().blockB2sLoans){
+    res.problems.push('Members who pay no monthly contribution cannot take loans.');
   } else if(after > cap + 0.005){
     const basisTxt = loanCapBasis()==='paid' ? 'their contributions paid so far this year' : 'their yearly contributions (monthly amount × 12)';
     res.problems.push(`A loan may not exceed ${loanCapPct()}% of ${basisTxt} (${fmtR(base)}), i.e. ${fmtR(cap)}. They already owe ${fmtR(outstanding)}, so this loan would take it to ${fmtR(after)}.`);
@@ -1244,9 +1420,9 @@ const ROUTES = [
   {id:'entry',    label:'Data Entry',             icon:'edit',     roles:['admin','capture']},
   {id:'sheet',    label:'Main Sheet',             icon:'grid',     roles:['admin','capture']},
   {id:'members',  label:'Members',                icon:'users',    roles:['admin','capture']},
-  {id:'loans',    label:'Loans',                  icon:'trend',    roles:['admin','capture']},
-  {id:'attendance',label:'Attendance',            icon:'calcheck', roles:['admin','capture']},
-  {id:'penalties',label:'Penalties',              icon:'calcheck', roles:['admin','capture']},
+  {id:'loans',    label:'Loans',                  icon:'trend',    roles:['admin','capture'], feat:'loans'},
+  {id:'attendance',label:'Attendance',            icon:'calcheck', roles:['admin','capture'], feat:'attendance'},
+  {id:'penalties',label:'Penalties',              icon:'calcheck', roles:['admin','capture'], feat:'penalties'},
   // Tucked into the menu (burger) button, grouped:
   {id:'months',   label:'Yearly Contributions',   icon:'calendar', roles:['admin','capture'], menu:'Reports'},
   {id:'reports',  label:'Monthly Report',         icon:'file',     roles:['admin','capture'], menu:'Reports'},
@@ -1258,7 +1434,7 @@ const ROUTES = [
 ];
 
 function routesForRole(role){
-  return ROUTES.filter(r => r.roles.includes(role) && (!r.perm || role==='admin' || can(r.perm)));
+  return ROUTES.filter(r => r.roles.includes(role) && (!r.perm || role==='admin' || can(r.perm)) && (!r.feat || feat(r.feat)));
 }
 
 function exportPdf(orientation){
@@ -1341,14 +1517,17 @@ function renderShell(){
   </div>
 
   <div class="ticker">
-    <b>Late (${ordDay(dueOnTimeDay()+1)}–${ordDay(dueLateDay())} of next month)</b> = <span class="r">${fmtR(s.late)}</span>
-    <span class="sep">·</span><b>Missed (≤R${s.t1Cutoff})</b> = <span class="r">${fmtR(s.t1)}</span>
-    <span class="sep">·</span><b>Missed (R${s.t1Cutoff}–${s.t2Cutoff})</b> = <span class="r">${fmtR(s.t2)}</span>
-    <span class="sep">·</span><b>Missed (&gt;R${s.t2Cutoff})</b> = <span class="r">${fmtR(s.t3)}</span>
-    <span class="sep">·</span><b>Interest not paid</b> = <span class="r">${fmtR(s.intPenalty)}</span>
-    <span class="sep">·</span><b>Loan interest</b> = <span class="g">${Math.round((s.intRate||0)*100)}%</span> non-compounding
-    <span class="sep">·</span><b>Attendance (no apology)</b> = <span class="r">${fmtR(s.attNoApol)}</span>
-    <span class="sep">·</span><b>B2S-only members</b> = exempt from all penalties
+    ${[
+      feat('penalties') && `<b>Late (${ordDay(dueOnTimeDay()+1)}–${ordDay(dueLateDay())} of next month)</b> = <span class="r">${fmtR(s.late)}</span>`,
+      feat('penalties') && `<b>Missed (≤R${s.t1Cutoff})</b> = <span class="r">${fmtR(s.t1)}</span>`,
+      feat('penalties') && `<b>Missed (R${s.t1Cutoff}–${s.t2Cutoff})</b> = <span class="r">${fmtR(s.t2)}</span>`,
+      feat('penalties') && `<b>Missed (&gt;R${s.t2Cutoff})</b> = <span class="r">${fmtR(s.t3)}</span>`,
+      feat('penalties') && feat('loans') && `<b>Interest not paid</b> = <span class="r">${fmtR(s.intPenalty)}</span>`,
+      feat('loans') && `<b>Loan interest</b> = <span class="g">${Math.round((s.intRate||0)*100)}%</span> non-compounding`,
+      feat('penalties') && feat('attendance') && `<b>Attendance (no apology)</b> = <span class="r">${fmtR(s.attNoApol)}</span>`,
+      feat('penalties') && `<b>B2S-only members</b> = exempt from all penalties`,
+      `<b>Resignation payout</b> = <span class="g">${payoutPct()}%</span>`
+    ].filter(Boolean).join('\n    <span class="sep">·</span>')}
   </div>
 
   <main id="mainArea"></main>
@@ -1413,6 +1592,7 @@ function renderAuditorShell(){
 }
 
 function render(){
+  startRuleObserver();
   if(!Store.isCloud()){
     document.getElementById('app').innerHTML = `
       <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px">
@@ -1425,6 +1605,7 @@ function render(){
   }
   applyBrand(state.route==='settings' && brandDraft ? brandDraft : (state.settings && state.settings.brand));
   if(state.route!=='settings') brandDraft = null;
+  if(state.route!=='settings') rulesDraft = null;
   if(Store.isCloud()){
     if(!Auth.ready){
       document.getElementById('app').innerHTML = `<div style="padding:60px;text-align:center;color:var(--muted)">Loading…</div>`;
@@ -1660,12 +1841,12 @@ function viewEntry(){
     <p class="sub">Leave any field blank or 0 if it doesn't apply. B2S-only members are exempt from penalties automatically.</p>
     <div class="grid g4">
       <div><label>Contribution</label><input type="number" id="eContr" min="0" step="0.01" placeholder="0"></div>
-      <div><label>Loan Repayment <span class="hint">optional — not required</span></label><input type="number" id="eLoanRep" min="0" step="0.01" placeholder="0"></div>
-      <div><label>Interest Paid</label><input type="number" id="eIntPay" min="0" step="0.01" placeholder="0"></div>
-      <div><label>Penalties Paid</label><input type="number" id="ePena" min="0" step="0.01" placeholder="0"></div>
-      <div><label>Back 2 School (B2S)</label><input type="number" id="eB2s" min="0" step="0.01" placeholder="0"></div>
-      <div><label>Funeral Fund</label><input type="number" id="eFuneral" min="0" step="0.01" placeholder="0"></div>
-      <div><label>Loan <span class="hint">new loan taken</span></label><input type="number" id="eTaken" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('loans')?'':'hidden style="display:none"'}><label> — not required</span></label><input type="number" id="eLoanRep" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('loans')?'':'hidden style="display:none"'}><label><input type="number" id="eIntPay" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('penalties')?'':'hidden style="display:none"'}><label><input type="number" id="ePena" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('b2s')?'':'hidden style="display:none"'}><label><input type="number" id="eB2s" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('funeral')?'':'hidden style="display:none"'}><label><input type="number" id="eFuneral" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('loans')?'':'hidden style="display:none"'}><label></span></label><input type="number" id="eTaken" min="0" step="0.01" placeholder="0"></div>
     </div>
     <div class="btnrow" style="margin-top:16px">
       <button class="btn" id="addEntryBtn">${icon('plus',15)} Add to batch</button>
@@ -2159,13 +2340,13 @@ function memberDetailHtml(member, opts){
       const penaltiesOwed = memberResignDraft.overridePenalty!==null ? memberResignDraft.overridePenalty : row.penaltiesOwed;
       const totalAvailable = row.totalContributions + row.b2sTotal;
       const net = totalAvailable - totalOwing - penaltiesOwed;
-      const forfeiture = net > 0 ? net*0.2 : 0;
-      const payout = net > 0 ? net*0.8 : 0;
+      const forfeiture = net > 0 ? net*(1-payoutFrac()) : 0;
+      const payout = net > 0 ? net*payoutFrac() : 0;
       const stillOwed = net < 0 ? -net : 0;
       resignBlock = `
       <div style="margin-top:18px;padding-top:18px;border-top:1px solid var(--line)">
         <h2 style="margin-bottom:4px"><span class="dot"></span>Resignation payout calculator</h2>
-        <p class="sub">Payout = 80% of (contributions + B2S − loan/interest owing − penalties owed). The club retains 20%.</p>
+        <p class="sub">Payout = ${payoutPct()}% of (contributions + B2S − loan/interest owing − penalties owed). The club retains ${100-payoutPct()}%.</p>
         <div class="grid g3">
           <div><label>Total owing (loan + interest) <span class="hint">auto-filled, editable</span></label><input type="number" id="rzOwing" value="${totalOwing.toFixed(2)}"></div>
           <div><label>Penalties owed <span class="hint">auto-filled, editable</span></label><input type="number" id="rzPenalty" value="${penaltiesOwed.toFixed(2)}"></div>
@@ -2174,7 +2355,7 @@ function memberDetailHtml(member, opts){
         <div class="grid g4" style="margin-top:14px">
           <div class="kpi"><div class="v">${fmtR(net)}</div><div class="l">Net after debts</div></div>
           <div class="kpi"><div class="v">${fmtR(forfeiture)}</div><div class="l">20% forfeiture (club)</div></div>
-          <div class="kpi"><div class="v" style="color:var(--green)">${fmtR(payout)}</div><div class="l">80% payout to member</div></div>
+          <div class="kpi"><div class="v" style="color:var(--green)">${fmtR(payout)}</div><div class="l">${payoutPct()}% payout to member</div></div>
           <div class="kpi"><div class="v" style="color:${stillOwed?'var(--red)':'inherit'}">${fmtR(stillOwed)}</div><div class="l">Still owed by member</div></div>
         </div>
         <div class="btnrow" style="margin-top:14px">
@@ -2495,8 +2676,8 @@ function wireMembers(){
       const penaltiesOwed = memberResignDraft.overridePenalty!==null ? memberResignDraft.overridePenalty : row.penaltiesOwed;
       const totalAvailable = row.totalContributions + row.b2sTotal;
       const net = totalAvailable - totalOwing - penaltiesOwed;
-      const forfeiture = net > 0 ? net*0.2 : 0;
-      const payout = net > 0 ? net*0.8 : 0;
+      const forfeiture = net > 0 ? net*(1-payoutFrac()) : 0;
+      const payout = net > 0 ? net*payoutFrac() : 0;
       const stillOwed = net < 0 ? -net : 0;
 
       const ok = await confirmModal('Record resignation settlement',
@@ -3173,6 +3354,7 @@ function viewSettings(){
   const c = Store.cloud;
   return `
   ${brandCardHtml()}
+  ${rulesCardHtml()}
   <div class="card">
     <h2><span class="dot"></span>Club details</h2>
     <div class="grid g2">
@@ -3251,6 +3433,7 @@ function viewSettings(){
 
 function wireSettings(){
   wireBrandCard();
+  wireRulesCard();
   document.getElementById('saveSettingsBtn').onclick = async () => {
     const g = id => document.getElementById(id);
     Object.assign(state.settings, {
@@ -3345,7 +3528,7 @@ function viewSummary(){
   const totalAlloc = rows.reduce((a,r)=>a+r.totalAlloc,0);
   const payoutLiability = rows.reduce((a,r)=>{
     const net = r.totalContributions + r.b2sTotal - r.totalOwing - r.penaltiesOwed;
-    return a + (net>0 ? net*0.8 : 0);
+    return a + (net>0 ? net*payoutFrac() : 0);
   },0);
 
   const monthTotals = MONTHS.map(m => state.members.reduce((s2,mem)=>s2+monthTotalForMember(mem.full,m),0));
@@ -3354,13 +3537,13 @@ function viewSummary(){
   // Where the money comes from (donut)
   const sources = [
     {label:'Contributions', value:totalContr, color:'#1fa971'},
-    {label:'Interest paid', value:totalIntPaid, color:'#f59e0b'},
-    {label:'Loan repayments', value:totalLoanRepaid, color:'#14b8a6'},
-    {label:'Penalties paid', value:totalPenPaid, color:'#ef4444'},
-    {label:'Back 2 School', value:totalB2s, color:'#3b82f6'},
-    {label:'Funeral fund', value:totalFuneral, color:'#8b5cf6'},
-    {label:'Year-end pool charges', value:totalPoolCharges, color:'#ec4899'},
-  ].filter(x => x.value > 0.005);
+    feat('loans') && {label:'Interest paid', value:totalIntPaid, color:'#f59e0b'},
+    feat('loans') && {label:'Loan repayments', value:totalLoanRepaid, color:'#14b8a6'},
+    feat('penalties') && {label:'Penalties paid', value:totalPenPaid, color:'#ef4444'},
+    feat('b2s') && {label:'Back 2 School', value:totalB2s, color:'#3b82f6'},
+    feat('funeral') && {label:'Funeral fund', value:totalFuneral, color:'#8b5cf6'},
+    feat('poolCharge') && feat('loans') && {label:'Year-end pool charges', value:totalPoolCharges, color:'#ec4899'},
+  ].filter(x => x && x.value > 0.005);
   const sourceTotal = sources.reduce((a,x)=>a+x.value,0);
   const R = 70, C = 2*Math.PI*R;
   let acc = 0;
@@ -4617,8 +4800,8 @@ function viewAudit(){
   <div class="navcard" style="margin:0 0 18px">
     <div class="navtabs" style="padding:12px">
       <button class="navtab ${auditSubTab==='member'?'active':''}" data-audittab="member">${icon('calcheck',16)} Member Audit</button>
-      <button class="navtab ${auditSubTab==='bank'?'active':''}" data-audittab="bank">${icon('trend',16)} Bank Audit</button>
-      ${Auth.isAuditor() ? `<button class="navtab ${auditSubTab==='penalties'?'active':''}" data-audittab="penalties">${icon('file',16)} Penalties</button>
+      ${feat('bankAudit') ? `<button class="navtab ${auditSubTab==='bank'?'active':''}" data-audittab="bank">${icon('trend',16)} Bank Audit</button>` : ''}
+      ${Auth.isAuditor() && feat('penalties') ? `<button class="navtab ${auditSubTab==='penalties'?'active':''}" data-audittab="penalties">${icon('file',16)} Penalties</button>
       <button class="navtab ${auditSubTab==='activity'?'active':''}" data-audittab="activity">${icon('file',16)} Activity Log</button>` : ''}
     </div>
   </div>
