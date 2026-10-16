@@ -210,8 +210,8 @@ const MONTH_ALIASES = {
 // from login + the row-level security rules in supabase-schema.sql, not from hiding
 // these.
 const DEFAULT_CLOUD = {
-  url: "https://aokyzcocayefqudstdbw.supabase.co",   // <-- paste your Supabase project URL here, e.g. https://abcdxyz.supabase.co
-  key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFva3l6Y29jYXllZnF1ZHN0ZGJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwODkwOTcsImV4cCI6MjEwNzY2NTA5N30.pFG_3585xResdxBE9lwwEIkuwBzC3gDs9D5wWrTLgcc"    // <-- paste your Supabase anon (public) key here
+  url: "",   // <-- paste your Supabase project URL here, e.g. https://abcdxyz.supabase.co
+  key: ""    // <-- paste your Supabase anon (public) key here
 };
 
 function normaliseMonth(raw){
@@ -233,6 +233,180 @@ function migrateLegacyMonths(){
   }
   return {changed, settingsChanged};
 }
+
+/* ---------------------------------------------------------------------
+   LOOK & FEEL — each club picks a theme colour, typeface, corner style
+   and logo. Stored in the club's own settings (state.settings.brand), so
+   every member of that club sees the same branding.
+   --------------------------------------------------------------------- */
+const BRAND_THEMES = [
+  { id:'forest', name:'Forest',  primary:'#1b5e3f' },
+  { id:'ocean',  name:'Ocean',   primary:'#1565c0' },
+  { id:'royal',  name:'Royal',   primary:'#6a3fb5' },
+  { id:'sunset', name:'Sunset',  primary:'#c2501a' },
+  { id:'rose',   name:'Rose',    primary:'#b83270' },
+  { id:'teal',   name:'Teal',    primary:'#00796b' },
+  { id:'earth',  name:'Earth',   primary:'#8a6212' },
+  { id:'slate',  name:'Slate',   primary:'#37474f' },
+];
+const BRAND_FONTS = {
+  modern:  { name:'Modern',  css:'-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+  classic: { name:'Classic', css:'Georgia, "Times New Roman", serif' },
+  friendly:{ name:'Friendly',css:'"Trebuchet MS", "Segoe UI", Verdana, system-ui, sans-serif' },
+};
+const BRAND_CORNERS = { round:{name:'Rounded', r:14, rs:9}, soft:{name:'Soft', r:8, rs:5}, sharp:{name:'Sharp', r:3, rs:2} };
+const DEFAULT_BRAND = { theme:'forest', primary:'#1b5e3f', font:'modern', corners:'round', logo:'' };
+
+function hexToHsl(hex){
+  let h = String(hex||'').replace('#',''); if(h.length===3) h = h.split('').map(c=>c+c).join('');
+  if(!/^[0-9a-fA-F]{6}$/.test(h)) h = '1b5e3f';
+  const r=parseInt(h.slice(0,2),16)/255, g=parseInt(h.slice(2,4),16)/255, b=parseInt(h.slice(4,6),16)/255;
+  const mx=Math.max(r,g,b), mn=Math.min(r,g,b); let hh=0, ss=0; const l=(mx+mn)/2;
+  if(mx!==mn){ const d=mx-mn; ss = l>0.5 ? d/(2-mx-mn) : d/(mx+mn);
+    hh = mx===r ? (g-b)/d+(g<b?6:0) : mx===g ? (b-r)/d+2 : (r-g)/d+4; hh*=60; }
+  return {h:hh, s:ss*100, l:l*100};
+}
+function hsl(h,s,l){ return `hsl(${Math.round(h)},${Math.round(Math.max(0,Math.min(100,s)))}%,${Math.round(Math.max(0,Math.min(100,l)))}%)`; }
+// Keeps the accent readable with white text (light mode) or on a dark panel (dark mode).
+function brandPalette(primary){
+  const {h,s,l} = hexToHsl(primary);
+  const sat = Math.max(25, Math.min(s, 80));
+  const rgbOf = (hh,ss,ll) => { hh/=360; ss/=100; ll/=100; const f=n=>{const k=(n+hh*12)%12,aa=ss*Math.min(ll,1-ll);return ll-aa*Math.max(-1,Math.min(k-3,9-k,1));}; return [f(0),f(8),f(4)]; };
+  const lumOf = c => { const t=c.map(v=>v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4)); return 0.2126*t[0]+0.7152*t[1]+0.0722*t[2]; };
+  const ratio = (c1,c2) => { const x=lumOf(c1), y=lumOf(c2); return (Math.max(x,y)+0.05)/(Math.min(x,y)+0.05); };
+  let accL = Math.min(l, 36); while(accL>8 && ratio(rgbOf(h,sat,accL),[1,1,1]) < 4.8) accL -= 1;
+  const darkBg = rgbOf(h,sat*0.28,11);
+  let accD = Math.max(l, 50); while(accD<92 && ratio(rgbOf(h,sat*0.85,accD),darkBg) < 5) accD += 1;
+  return {
+    light:{ bg:hsl(h,sat*0.45,95), panel:'#ffffff', panel2:hsl(h,sat*0.45,97), stripe:hsl(h,sat*0.45,96), line:hsl(h,sat*0.3,90),
+            text:hsl(h,35,12), muted:hsl(h,10,40), accent:hsl(h,sat,accL), accentDark:hsl(h,sat,Math.max(10,accL-8)), accentLight:hsl(h,sat*0.6,92) },
+    dark:{  bg:hsl(h,sat*0.3,8), panel:hsl(h,sat*0.28,11), panel2:hsl(h,sat*0.28,14), stripe:hsl(h,sat*0.28,12.5), line:hsl(h,sat*0.25,20),
+            text:hsl(h,25,92), muted:hsl(h,10,62), accent:hsl(h,sat*0.85,accD), accentDark:hsl(h,sat*0.85,Math.max(30,accD-12)), accentLight:hsl(h,sat*0.4,18) }
+  };
+}
+function brandOf(b){ return Object.assign({}, DEFAULT_BRAND, b||{}); }
+function brandCss(b){
+  b = brandOf(b);
+  const P = brandPalette(b.primary), f = (BRAND_FONTS[b.font]||BRAND_FONTS.modern).css, c = BRAND_CORNERS[b.corners]||BRAND_CORNERS.round;
+  const vars = (v) => `--bg:${v.bg};--panel:${v.panel};--panel-2:${v.panel2};--stripe:${v.stripe};--line:${v.line};--text:${v.text};--muted:${v.muted};--accent:${v.accent};--accent-dark:${v.accentDark};--accent-light:${v.accentLight};`;
+  return `:root{${vars(P.light)}--font:${f};--radius:${c.r}px;--radius-sm:${c.rs}px}\n[data-theme="dark"]{${vars(P.dark)}}`;
+}
+function brandInitials(){
+  const nm = (state.settings && (state.settings.clubShort || state.settings.clubName)) || 'Club';
+  const w = String(nm).trim().split(/\s+/).filter(Boolean);
+  return ((w.length>1 ? w[0][0]+w[1][0] : String(nm).slice(0,2)) || 'C').toUpperCase();
+}
+function defaultLogoUri(primary){
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${primary}"/><text x="32" y="42" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="700" font-size="26" fill="#fff">${brandInitials().replace(/[<>&]/g,'')}</text></svg>`;
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+function clubLogoUri(){
+  const b = brandOf(state.settings && state.settings.brand);
+  return b.logo || defaultLogoUri(brandPalette(b.primary).light.accent);
+}
+function applyBrand(b){
+  try{
+    let el = document.getElementById('brandStyle');
+    if(!el){ el = document.createElement('style'); el.id = 'brandStyle'; document.head.appendChild(el); }
+    el.textContent = brandCss(b);
+    const tc = document.querySelector && document.querySelector('meta[name="theme-color"]');
+    if(tc) tc.content = brandPalette(brandOf(b).primary).light.accent.replace(/^hsl\((\d+),(\d+)%,(\d+)%\)$/, 'hsl($1,$2%,$3%)');
+    const fav = document.querySelector && document.querySelector('link[rel="icon"]');
+    if(fav && state.settings && state.settings.brand && state.settings.brand.logo) fav.href = state.settings.brand.logo;
+  }catch(e){ /* styling must never break the app */ }
+}
+
+// Shrinks an uploaded picture to a small PNG so it stays light inside the settings row.
+function fileToLogoDataUri(file){
+  return new Promise((resolve, reject) => {
+    if(!file) return reject(new Error('No file chosen.'));
+    if(!/^image\//.test(file.type)) return reject(new Error('Please choose an image (PNG, JPG, SVG or WEBP).'));
+    if(file.size > 3*1024*1024) return reject(new Error('That picture is too large. Use one under 3 MB.'));
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error('Could not read that file.'));
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('That picture could not be opened.'));
+      img.onload = () => {
+        const maxW = 360, maxH = 240;
+        const w0 = img.naturalWidth || img.width || maxW, h0 = img.naturalHeight || img.height || maxH;
+        const k = Math.min(1, maxW/w0, maxH/h0);
+        const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(w0*k)); cv.height = Math.max(1, Math.round(h0*k));
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        let out = cv.toDataURL('image/png');
+        if(out.length > 200000) out = cv.toDataURL('image/webp', 0.85);
+        if(out.length > 250000) return reject(new Error('That picture is too detailed. Try a simpler logo.'));
+        resolve(out);
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+let brandDraft = null;
+function brandCardHtml(){
+  const b = brandDraft || brandOf(state.settings.brand);
+  const pal = brandPalette(b.primary).light;
+  return `
+  <div class="card" id="brandCard">
+    <h2><span class="dot"></span>Look &amp; feel</h2>
+    <p class="sub">Choose how your club's portal looks for everyone in it. Changes show straight away; press <b>Save look &amp; feel</b> to keep them.</p>
+    <label>Theme</label>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 14px">
+      ${BRAND_THEMES.map(t => `<button type="button" class="btn secondary sm" data-brandtheme="${t.id}" style="display:flex;align-items:center;gap:8px;${b.theme===t.id?'outline:2px solid var(--accent);':''}">
+        <span style="width:16px;height:16px;border-radius:50%;background:${t.primary};display:inline-block"></span>${t.name}</button>`).join('')}
+      <label class="btn secondary sm" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;${b.theme==='custom'?'outline:2px solid var(--accent);':''}">
+        <input type="color" id="brandCustom" value="${escapeHtml(/^#[0-9a-fA-F]{6}$/.test(b.primary)?b.primary:'#1b5e3f')}" style="width:22px;height:22px;padding:0;border:none;background:none"> Custom colour</label>
+    </div>
+    <div class="grid g3">
+      <div><label>Typeface</label><select id="brandFont">${Object.entries(BRAND_FONTS).map(([k,v])=>`<option value="${k}" ${b.font===k?'selected':''}>${v.name}</option>`).join('')}</select></div>
+      <div><label>Corners</label><select id="brandCorners">${Object.entries(BRAND_CORNERS).map(([k,v])=>`<option value="${k}" ${b.corners===k?'selected':''}>${v.name}</option>`).join('')}</select></div>
+      <div><label>Dark mode</label><p class="sub" style="margin:8px 0 0">Everyone can switch light and dark with the moon button; each theme has both.</p></div>
+    </div>
+    <label style="margin-top:14px;display:block">Logo</label>
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:6px">
+      <div style="height:64px;display:flex;align-items:center"><img id="brandLogoPreview" src="${b.logo || defaultLogoUri(pal.accent)}" alt="Logo preview" style="height:64px;width:auto;max-width:180px;object-fit:contain"></div>
+      <div class="btnrow">
+        <label class="btn secondary sm" style="cursor:pointer;margin:0">Upload logo<input type="file" id="brandLogoFile" accept="image/*" style="display:none"></label>
+        <button type="button" class="btn secondary sm" id="brandLogoClear">Use club initials</button>
+      </div>
+    </div>
+    <p class="sub">A square or wide picture works best (PNG with a clear background looks neatest). Large pictures are shrunk automatically.</p>
+    <div class="btnrow" style="margin-top:14px">
+      <button class="btn" id="brandSaveBtn">Save look &amp; feel</button>
+      <button class="btn secondary" id="brandResetBtn">Back to the default</button>
+    </div>
+  </div>`;
+}
+function wireBrandCard(){
+  const draft = () => (brandDraft = brandDraft || brandOf(state.settings.brand));
+  const refresh = () => { applyBrand(brandDraft); const card = document.getElementById('brandCard'); if(card){ const y = window.scrollY; card.outerHTML = brandCardHtml(); wireBrandCard(); } };
+  document.querySelectorAll('[data-brandtheme]').forEach(btn => btn.onclick = () => {
+    const t = BRAND_THEMES.find(x => x.id === btn.dataset.brandtheme); if(!t) return;
+    Object.assign(draft(), {theme:t.id, primary:t.primary}); refresh();
+  });
+  const cc = document.getElementById('brandCustom');
+  if(cc) cc.onchange = () => { Object.assign(draft(), {theme:'custom', primary:cc.value}); refresh(); };
+  const ff = document.getElementById('brandFont'); if(ff) ff.onchange = () => { draft().font = ff.value; refresh(); };
+  const co = document.getElementById('brandCorners'); if(co) co.onchange = () => { draft().corners = co.value; refresh(); };
+  const lf = document.getElementById('brandLogoFile');
+  if(lf) lf.onchange = async () => {
+    try{ draft().logo = await fileToLogoDataUri(lf.files && lf.files[0]); refresh(); }
+    catch(e){ toast(e.message, true); }
+  };
+  const lc = document.getElementById('brandLogoClear'); if(lc) lc.onclick = () => { draft().logo = ''; refresh(); };
+  const rs = document.getElementById('brandResetBtn'); if(rs) rs.onclick = () => { brandDraft = brandOf({}); refresh(); };
+  const sv = document.getElementById('brandSaveBtn');
+  if(sv) sv.onclick = async () => {
+    state.settings.brand = Object.assign({}, brandDraft || brandOf(state.settings.brand));
+    brandDraft = null;
+    await saveSettingsCloud();
+    applyBrand(state.settings.brand);
+    toast('Look & feel saved.'); render();
+  };
+}
+
 function settingsId(){ return 'main'; }   // one settings row per club: the database keys it by (club_id, id)
 function uid(prefix){ return prefix + Math.random().toString(36).slice(2,10); }
 function fmtR(n){
@@ -1118,7 +1292,7 @@ function renderShell(){
   return `
   <div class="topbar">
     <div class="brand">
-      <div class="brand-badge"><img src="${CLUB_LOGO_URI}" alt="Club logo"></div>
+      <div class="brand-badge"><img src="${clubLogoUri()}" alt="Club logo"></div>
       <div class="brand-text">
         <h1>${escapeHtml(s.clubName || 'Your Club')}</h1>
         <p>Financial Input Dashboard</p>
@@ -1181,7 +1355,7 @@ function renderMemberSelfShell(){
   app.innerHTML = `
   <div class="topbar">
     <div class="brand">
-      <div class="brand-badge"><img src="${CLUB_LOGO_URI}" alt="Club logo"></div>
+      <div class="brand-badge"><img src="${clubLogoUri()}" alt="Club logo"></div>
       <div class="brand-text">
         <h1>${escapeHtml((state.settings&&state.settings.clubName)||'Your Club')}</h1>
         <p>My Account</p>
@@ -1212,7 +1386,7 @@ function renderAuditorShell(){
   app.innerHTML = `
   <div class="topbar">
     <div class="brand">
-      <div class="brand-badge"><img src="${CLUB_LOGO_URI}" alt="Club logo"></div>
+      <div class="brand-badge"><img src="${clubLogoUri()}" alt="Club logo"></div>
       <div class="brand-text">
         <h1>${escapeHtml((state.settings&&state.settings.clubName)||'Your Club')}</h1>
         <p>Audit Tool</p>
@@ -1233,6 +1407,8 @@ function renderAuditorShell(){
 }
 
 function render(){
+  applyBrand(state.route==='settings' && brandDraft ? brandDraft : (state.settings && state.settings.brand));
+  if(state.route!=='settings') brandDraft = null;
   if(Store.isCloud()){
     if(!Auth.ready){
       document.getElementById('app').innerHTML = `<div style="padding:60px;text-align:center;color:var(--muted)">Loading…</div>`;
@@ -2980,6 +3156,7 @@ function viewSettings(){
   const s = state.settings;
   const c = Store.cloud;
   return `
+  ${brandCardHtml()}
   <div class="card">
     <h2><span class="dot"></span>Club details</h2>
     <div class="grid g2">
@@ -3057,6 +3234,7 @@ function viewSettings(){
 }
 
 function wireSettings(){
+  wireBrandCard();
   document.getElementById('saveSettingsBtn').onclick = async () => {
     const g = id => document.getElementById(id);
     Object.assign(state.settings, {
@@ -3381,7 +3559,7 @@ function authShellWrap(inner){
   <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px">
     <div style="width:100%;max-width:420px">
       <div style="display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:22px">
-        <div class="brand-badge"><img src="${CLUB_LOGO_URI}" alt="Club logo"></div>
+        <div class="brand-badge"><img src="${clubLogoUri()}" alt="Club logo"></div>
         <div>
           <h1 style="margin:0;font-size:18px;font-style:italic">${escapeHtml((state.settings&&state.settings.clubName)||'Your Club')}</h1>
           <p style="margin:0;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Financial Input Dashboard</p>
