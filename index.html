@@ -183,6 +183,7 @@
 <div id="toasts"></div>
 <div id="app"></div>
 <script id="seed-data" type="application/json">{"members": [], "datalog": [], "settings": {"clubName": "Your Club", "clubShort": "YC", "intRate": 0.2, "memberShare": 0.95, "clubShare": 0.05, "monthsElapsed": 10, "yearLabel": 2026, "b2sCount": 0, "activeCount": 0, "late": 50, "t1": 150, "t2": 200, "t3": 300, "intPenalty": 70, "noIntPool": 200, "attApology": 100, "attNoApol": 200, "attProxy": 200, "t1Cutoff": 1000, "t2Cutoff": 2000, "bankInterest": 0, "functionFundCost": 0, "applyPenaltyShare": "NO", "bankSignatories": [], "dueOnTimeDay": 4, "dueLateDay": 10, "noPenaltyMonth": "Dec"}, "attMeeting": {"date": "", "number": 1, "notes": ""}}</script>
+<script src="config.js"></script>
 <script>
 
 
@@ -209,9 +210,10 @@ const MONTH_ALIASES = {
 // values are meant to be public (that's the Supabase model) — real security comes
 // from login + the row-level security rules in supabase-schema.sql, not from hiding
 // these.
+// The project URL and public (anon) key are built in. config.js, if present, overrides them.
 const DEFAULT_CLOUD = {
-  url: "https://aokyzcocayefqudstdbw.supabase.co",   // <-- paste your Supabase project URL here, e.g. https://abcdxyz.supabase.co
-  key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFva3l6Y29jYXllZnF1ZHN0ZGJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwODkwOTcsImV4cCI6MjEwNzY2NTA5N30.pFG_3585xResdxBE9lwwEIkuwBzC3gDs9D5wWrTLgcc"    // <-- paste your Supabase anon (public) key here
+  url: (typeof window!=='undefined' && window.SAAS_CONFIG && window.SAAS_CONFIG.url) || "https://aokyzcocayefqudstdbw.supabase.co",
+  key: (typeof window!=='undefined' && window.SAAS_CONFIG && window.SAAS_CONFIG.key) || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFva3l6Y29jYXllZnF1ZHN0ZGJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwODkwOTcsImV4cCI6MjEwNzY2NTA5N30.pFG_3585xResdxBE9lwwEIkuwBzC3gDs9D5wWrTLgcc"
 };
 
 function normaliseMonth(raw){
@@ -467,6 +469,9 @@ async function ensureSupabaseLib(){
   return false;
 }
 
+// True when the person has just arrived from the "confirm your email" link in their inbox.
+const CAME_FROM_EMAIL_LINK = (typeof location!=='undefined') && /[#&?]type=(signup|email|invite)\b|[?&]code=/.test(String(location.hash||'')+String(location.search||''));
+
 const Auth = {
   client: null, session: null, profile: null, ready: false, initError: null,
 
@@ -495,6 +500,7 @@ const Auth = {
       const { data } = await client.auth.getSession();
       this.session = data.session || null;
       if(this.session) await this.loadProfile();
+      if(this.session && CAME_FROM_EMAIL_LINK){ setTimeout(() => toast('Your email is confirmed. Welcome!'), 600); try{ history.replaceState(null,'',location.pathname); }catch(_){} }
       client.auth.onAuthStateChange((_event, session) => {
         this.session = session;
         this.loadProfile().then(() => { Store.trySyncFromCloud().finally(render); });
@@ -1407,6 +1413,16 @@ function renderAuditorShell(){
 }
 
 function render(){
+  if(!Store.isCloud()){
+    document.getElementById('app').innerHTML = `
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px">
+        <div class="card" style="max-width:520px">
+          <h2><span class="dot" style="background:var(--red)"></span>Not connected to the database</h2>
+          <p class="sub">This portal has no database connection, so it cannot sign anyone in or save anything. If you run this app, make sure the file <b>config.js</b> is uploaded next to <b>index.html</b> and contains your Supabase project URL and public key, then reload.</p>
+        </div>
+      </div>`;
+    return;
+  }
   applyBrand(state.route==='settings' && brandDraft ? brandDraft : (state.settings && state.settings.brand));
   if(state.route!=='settings') brandDraft = null;
   if(Store.isCloud()){
