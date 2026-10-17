@@ -198,7 +198,10 @@ const CLUB_LOGO_URI = "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2
    ========================================================================== */
 
 const SEED = JSON.parse(document.getElementById('seed-data').textContent);
-const MONTHS = ["Dec","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov"];
+const MON_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTHS = ["Dec","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov"]; // rebuilt from the club's start month by syncMonths()
+const ROLE_BASES = ['capture','viewer','auditor','member'];
+const DELEGABLE_KEYS = ['members','settings','yearend','activity'];
 const MONTH_ALIASES = {
   "dec":"Dec","december":"Dec","jan":"Jan","january":"Jan",
   "dec-jan":"Jan","decjan":"Jan","dec/jan":"Jan", // old combined slot: treated as January
@@ -419,10 +422,24 @@ const DEFAULT_RULES = {
   blockB2sLoans:true,           // members who pay no monthly contribution cannot take loans
   payoutPct:80,                 // % of a resigning member's balance that is paid out; the club keeps the rest
   labels:{ b2s:'Back 2 School', b2sShort:'B2S', funeral:'Funeral Fund' },
+  startMonth:12,                // calendar month (1-12) the club's financial year begins in; 12 = December
+  roles:[],                     // the club's own named roles (see rolesCardHtml)
 };
+function syncMonths(sm){
+  // MONTHS is the club's financial year in order, starting from its start month. It is rebuilt in place
+  // so every screen that reads it follows the club's calendar.
+  const want = Array.from({length:12}, (_,i) => MON_SHORT[(sm-1+i)%12]);
+  if(MONTHS.join() !== want.join()){ MONTHS.length = 0; want.forEach(m => MONTHS.push(m)); }
+}
+function startMonth(){ return rules().startMonth; }
 function rules(){
   const r = (state.settings && state.settings.rules) || {};
+  const sm = Math.round(Number(r.startMonth));
+  const startM = (sm>=1 && sm<=12) ? sm : DEFAULT_RULES.startMonth;
+  syncMonths(startM);
   return {
+    startMonth: startM,
+    roles: Array.isArray(r.roles) ? r.roles.filter(x => x && x.id && x.name && ROLE_BASES.includes(x.base)).map(x => ({id:String(x.id), name:String(x.name), base:x.base, perms:Array.isArray(x.perms)?x.perms.filter(k=>DELEGABLE_KEYS.includes(k)):[]})) : [],
     features: Object.assign({}, DEFAULT_RULES.features, r.features||{}),
     blockB2sLoans: r.blockB2sLoans === undefined ? DEFAULT_RULES.blockB2sLoans : !!r.blockB2sLoans,
     payoutPct: (isFinite(Number(r.payoutPct)) && Number(r.payoutPct) >= 0 && Number(r.payoutPct) <= 100 && r.payoutPct !== '' && r.payoutPct !== undefined && r.payoutPct !== null) ? Number(r.payoutPct) : DEFAULT_RULES.payoutPct,
@@ -513,7 +530,94 @@ function startRuleObserver(){
   ruleObs.observe(root, {childList:true, subtree:true});
 }
 
+/* ---------------------------------------------------------------------
+   CLUB ROLES — a club names its own roles ("Treasurer", "Chairperson"...).
+   A role is a base access level plus a fixed set of abilities. The database
+   only ever sees the base level and the abilities, so a role can never give
+   more than the base level allows.
+   --------------------------------------------------------------------- */
+const ROLE_BASE_LABEL = {
+  capture:'Captures payments and data', viewer:'Read-only: sees the club, changes nothing',
+  auditor:'Auditor: sees executives only', member:'Member: sees own account only'
+};
+const ROLE_PRESETS = [
+  {name:'Treasurer',    base:'capture', perms:['members','yearend']},
+  {name:'Secretary',    base:'capture', perms:['activity']},
+  {name:'Chairperson',  base:'viewer',  perms:['activity']},
+];
+function rolePermKeys(base){ return base==='capture' ? DELEGABLE_KEYS.slice() : (base==='viewer' ? ['activity'] : []); }
+let rolesDraft = null;
+function rolesCardHtml(){
+  if(!canManage()) return '';
+  const list = rolesDraft || rules().roles;
+  const row = (r) => `<tr data-roleid="${escapeHtml(r.id)}">
+    <td><input type="text" data-rname value="${escapeHtml(r.name)}" maxlength="40" placeholder="e.g. Treasurer"></td>
+    <td><select data-rbase>${ROLE_BASES.map(b => `<option value="${b}" ${r.base===b?'selected':''}>${escapeHtml(ROLE_BASE_LABEL[b])}</option>`).join('')}</select></td>
+    <td>${DELEGABLE.map(d => { const ok = rolePermKeys(r.base).includes(d.key); return `<label style="display:flex;gap:6px;align-items:center;font-weight:400;font-size:12.5px;margin:2px 0;${ok?'':'opacity:.4'}" title="${escapeHtml(d.hint)}"><input type="checkbox" data-rperm value="${d.key}" ${r.perms.includes(d.key)&&ok?'checked':''} ${ok?'':'disabled'}> ${escapeHtml(d.label)}</label>`; }).join('')}</td>
+    <td><button type="button" class="btn danger sm" data-rdel title="Remove this role">${icon('trash',12)}</button></td></tr>`;
+  return `
+  <div class="card" id="rolesCard">
+    <h2><span class="dot"></span>Club roles</h2>
+    <p class="sub">Give your committee roles that match how your club works. Pick a role for each person on the Users screen. The admin role is fixed and always stays with the person who set the club up. Saving updates everyone who already holds a changed role.</p>
+    ${list.length===0 ? `<div class="empty">No roles yet. Add one below, or start from a suggestion.</div>` : `
+    <div class="tablewrap"><table><thead><tr><th>Role name</th><th>Access level</th><th>Abilities</th><th></th></tr></thead><tbody>${list.map(row).join('')}</tbody></table></div>`}
+    <div class="btnrow" style="margin-top:12px">
+      <button type="button" class="btn secondary sm" id="roleAddBtn">${icon('plus',13)} Add a role</button>
+      ${ROLE_PRESETS.filter(p => !list.some(r => r.name.toLowerCase()===p.name.toLowerCase())).map(p => `<button type="button" class="btn secondary sm" data-rolepreset="${escapeHtml(p.name)}">${icon('plus',13)} ${escapeHtml(p.name)}</button>`).join('')}
+      <button type="button" class="btn" id="rolesSaveBtn">Save roles</button>
+    </div>
+  </div>`;
+}
+function readRolesForm(){
+  return [...document.querySelectorAll('#rolesCard tr[data-roleid]')].map(tr => {
+    const base = tr.querySelector('[data-rbase]').value, ok = rolePermKeys(base);
+    return {id: tr.dataset.roleid, name: tr.querySelector('[data-rname]').value.trim(), base,
+            perms: [...tr.querySelectorAll('[data-rperm]:checked')].map(c => c.value).filter(k => ok.includes(k))};
+  });
+}
+function wireRolesCard(){
+  const card = document.getElementById('rolesCard'); if(!card) return;
+  const redraw = () => { document.getElementById('rolesCard').outerHTML = rolesCardHtml(); wireRolesCard(); };
+  card.querySelectorAll('[data-rbase]').forEach(sel => sel.onchange = () => { rolesDraft = readRolesForm(); redraw(); });
+  card.querySelectorAll('[data-rdel]').forEach(b => b.onclick = () => { const id = b.closest('tr').dataset.roleid; rolesDraft = readRolesForm().filter(r => r.id !== id); redraw(); });
+  const add = document.getElementById('roleAddBtn');
+  if(add) add.onclick = () => { rolesDraft = readRolesForm().concat([{id:uid('r'), name:'', base:'capture', perms:[]}]); redraw(); };
+  card.querySelectorAll('[data-rolepreset]').forEach(b => b.onclick = () => {
+    const p = ROLE_PRESETS.find(x => x.name === b.dataset.rolepreset); if(!p) return;
+    rolesDraft = readRolesForm().concat([{id:uid('r'), name:p.name, base:p.base, perms:p.perms.slice()}]); redraw();
+  });
+  const sv = document.getElementById('rolesSaveBtn');
+  if(sv) sv.onclick = async () => {
+    const next = readRolesForm();
+    const names = next.map(r => r.name.toLowerCase());
+    if(next.some(r => !r.name)){ toast('Give every role a name.', true); return; }
+    if(new Set(names).size !== names.length){ toast('Two roles have the same name.', true); return; }
+    if(names.some(n => ['admin','capture','viewer','member','auditor','pending'].includes(n))){ toast('Choose a name that is not one of the built-in roles.', true); return; }
+    const before = rules().roles;
+    try{
+      // Everyone who already holds a changed (or removed) role is brought into line first.
+      for(const old of before){
+        const nu = next.find(r => r.id === old.id);
+        const same = nu && nu.name===old.name && nu.base===old.base && nu.perms.slice().sort().join()===old.perms.slice().sort().join();
+        if(same) continue;
+        const patch = nu ? {role_title: nu.name, role: nu.base, perms: nu.perms} : {role_title: null};
+        await Store.cloudFetch('mk_profiles?role_title=eq.' + encodeURIComponent(old.name) + '&role=eq.' + encodeURIComponent(old.base), {method:'PATCH', body: JSON.stringify(patch)});
+      }
+    }catch(e){ toast('Could not update the people who hold these roles: ' + e.message, true); return; }
+    state.settings.rules = Object.assign({}, rules(), {roles: next}); rolesDraft = null;
+    await saveSettingsCloud();
+    await loadProfilesCache();
+    toast('Roles saved.'); render();
+  };
+}
+
 let rulesDraft = null;
+function yearSpanText(sm){
+  const names=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const y = Number(state.settings.yearLabel) || new Date().getFullYear();
+  const end = names[(sm+10)%12];
+  return sm===1 ? `Year ${y} runs January to December ${y}.` : `Year ${y} runs ${names[sm-1]} ${y-1} to ${end} ${y}.`;
+}
 function rulesCardHtml(){
   const R = rulesDraft || rules();
   const F = R.features;
@@ -545,6 +649,11 @@ function rulesCardHtml(){
         <select id="ruleB2sLoans"><option value="1" ${R.blockB2sLoans?'selected':''}>Not allowed</option><option value="0" ${!R.blockB2sLoans?'selected':''}>Allowed</option></select></div>
     </div>
     <div class="grid g3" style="margin-top:12px">
+      <div><label>Financial year starts in <span class="hint">set this before capturing; changing it later reorders the year</span></label>
+        <select id="ruleStartMonth">${MON_SHORT.map((m,i)=>`<option value="${i+1}" ${R.startMonth===i+1?'selected':''}>${['January','February','March','April','May','June','July','August','September','October','November','December'][i]}</option>`).join('')}</select></div>
+      <div><label>Year number <span class="hint">the year the financial year ends in</span></label><div class="hint" style="padding-top:10px">${escapeHtml(yearSpanText(R.startMonth))}</div></div>
+    </div>
+    <div class="grid g3" style="margin-top:12px">
       <div><label>First fund name</label><input type="text" id="ruleLblB2s" value="${escapeHtml(R.labels.b2s)}"></div>
       <div><label>First fund short name</label><input type="text" id="ruleLblB2sShort" value="${escapeHtml(R.labels.b2sShort)}" maxlength="12"></div>
       <div><label>Second fund name</label><input type="text" id="ruleLblFuneral" value="${escapeHtml(R.labels.funeral)}"></div>
@@ -559,6 +668,8 @@ function wireRulesCard(){
     return {
       features,
       blockB2sLoans: g('ruleB2sLoans').value === '1',
+      startMonth: Number(g('ruleStartMonth').value) || DEFAULT_RULES.startMonth,
+      roles: rules().roles,
       payoutPct: Math.max(0, Math.min(100, Number(g('rulePayout').value))),
       labels: { b2s: (g('ruleLblB2s').value.trim() || DEFAULT_RULES.labels.b2s), b2sShort: (g('ruleLblB2sShort').value.trim() || DEFAULT_RULES.labels.b2sShort), funeral: (g('ruleLblFuneral').value.trim() || DEFAULT_RULES.labels.funeral) },
     };
@@ -736,6 +847,7 @@ const Auth = {
   isCapture(){ return this.role() === 'capture'; },
   isMember(){ return this.role() === 'member'; },
   isAuditor(){ return this.role() === 'auditor'; },
+  isViewer(){ return this.role() === 'viewer'; },
   canManage(){ return this.isAdmin(); },                       // members, bulk, resign, new year, settings, users
   canCapture(){ return this.isAdmin() || this.isCapture(); },  // data entry, attendance, add loan
   canAudit(){ return this.isAdmin() || this.isAuditor(); },    // the audit tool
@@ -1020,9 +1132,8 @@ function computeInterestAccrued(fullName, loanBalance, entries){
 }
 
 function currentFiscalMonthGuess(){
-  const m = new Date().getMonth(); // 0=Jan
-  const map = [2,3,4,5,6,7,8,9,10,11,12,1]; // Jan..Dec -> fiscal slot (Dec is slot 1, Nov is slot 12)
-  return MONTHS[map[m]-1];
+  rules();                          // makes sure MONTHS follows the club's calendar
+  return MON_SHORT[new Date().getMonth()];
 }
 
 // The full computed row for one member — mirrors every Spreadsheet column.
@@ -1113,7 +1224,6 @@ function monthlyReport(month){
    --------------------------------------------------------------------- */
 
 // ---- Plain-language penalty reasons -------------------------------------
-const MON_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function dayMonth(dateStr){
   const d = new Date(dateStr);
   return isNaN(d) ? '' : `${d.getDate()} ${MON_SHORT[d.getMonth()]}`;
@@ -1153,7 +1263,7 @@ function reasonInterest(month, loanBalance){
 function ordDay(n){ n=Number(n); const t=n%100; const suf=(t>=11&&t<=13)?'th':({1:'st',2:'nd',3:'rd'}[n%10]||'th'); return n+suf; }
 function dueOnTimeDay(){ const v=Number(state.settings.dueOnTimeDay); return (isFinite(v)&&v>=0&&v<=27)?Math.floor(v):4; }
 function dueLateDay(){ const v=Number(state.settings.dueLateDay); return (isFinite(v)&&v>dueOnTimeDay()&&v<=28)?Math.floor(v):Math.max(10,dueOnTimeDay()+1); }
-function noPenaltyMonth(){ const v=state.settings.noPenaltyMonth; return v===undefined?'Dec':String(v||''); }
+function noPenaltyMonth(){ const v=state.settings.noPenaltyMonth; return v===undefined?(rules(),MONTHS[0]):String(v||''); }
 function isNoPenaltyMonth(m){ const n=noPenaltyMonth(); return !!n && m===n; }
 const MONTH_NUM = {Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12};
 function contributionTiming(month, dateStr){
@@ -1161,7 +1271,8 @@ function contributionTiming(month, dateStr){
   const mn = MONTH_NUM[month];
   if(p.length < 3 || !p[0] || !mn) return 'ontime';
   const fy = Number(state.settings.yearLabel);
-  const cy = fy ? (month === 'Dec' ? fy - 1 : fy) : p[0];
+  const sm = startMonth();   // the financial year is named after the year it ends in
+  const cy = fy ? ((sm > 1 && mn >= sm) ? fy - 1 : fy) : p[0];
   const after = (p[0]*12 + p[1]) - (cy*12 + mn);   // whole months after the contribution month
   if(after <= 0) return 'ontime';                  // paid in the month itself, or in advance
   if(after === 1) return p[2] > dueLateDay() ? 'missed' : (p[2] > dueOnTimeDay() ? 'late' : 'ontime');
@@ -1416,19 +1527,19 @@ function icon(name, size){
 // full app shell with a nav bar; 'member' gets a single-page self view
 // (see renderMemberSelfShell) and never sees this list at all.
 const ROUTES = [
-  {id:'summary',  label:'Summary',               icon:'home',     roles:['admin','capture']},
+  {id:'summary',  label:'Summary',               icon:'home',     roles:['admin','capture','viewer']},
   {id:'entry',    label:'Data Entry',             icon:'edit',     roles:['admin','capture']},
-  {id:'sheet',    label:'Main Sheet',             icon:'grid',     roles:['admin','capture']},
-  {id:'members',  label:'Members',                icon:'users',    roles:['admin','capture']},
+  {id:'sheet',    label:'Main Sheet',             icon:'grid',     roles:['admin','capture','viewer']},
+  {id:'members',  label:'Members',                icon:'users',    roles:['admin','capture','viewer']},
   {id:'loans',    label:'Loans',                  icon:'trend',    roles:['admin','capture'], feat:'loans'},
   {id:'attendance',label:'Attendance',            icon:'calcheck', roles:['admin','capture'], feat:'attendance'},
-  {id:'penalties',label:'Penalties',              icon:'calcheck', roles:['admin','capture'], feat:'penalties'},
+  {id:'penalties',label:'Penalties',              icon:'calcheck', roles:['admin','capture','viewer'], feat:'penalties'},
   // Tucked into the menu (burger) button, grouped:
-  {id:'months',   label:'Yearly Contributions',   icon:'calendar', roles:['admin','capture'], menu:'Reports'},
-  {id:'reports',  label:'Monthly Report',         icon:'file',     roles:['admin','capture'], menu:'Reports'},
+  {id:'months',   label:'Yearly Contributions',   icon:'calendar', roles:['admin','capture','viewer'], menu:'Reports'},
+  {id:'reports',  label:'Monthly Report',         icon:'file',     roles:['admin','capture','viewer'], menu:'Reports'},
   {id:'newyear',  label:'Year-End Tools',         icon:'refresh',  roles:['admin','capture'], menu:'Admin tools', perm:'yearend'},
   {id:'audit',    label:'Audit',                  icon:'calcheck', roles:['admin'],           menu:'Admin tools'},
-  {id:'activity', label:'Activity Log',           icon:'file',     roles:['admin','capture'], menu:'Admin tools', perm:'activity'},
+  {id:'activity', label:'Activity Log',           icon:'file',     roles:['admin','capture','viewer'], menu:'Admin tools', perm:'activity'},
   {id:'users',    label:'Users & permissions',    icon:'user',     roles:['admin'],           menu:'Admin tools'},
   {id:'settings', label:'Settings',                icon:'settings', roles:['admin','capture'], menu:'Admin tools', perm:'settings'},
 ];
@@ -1485,7 +1596,7 @@ function renderShell(){
       ${icon('search',16)}
       <input id="globalSearch" type="text" placeholder="Search members…" value="${escapeHtml(state.searchQuery)}">
     </div>
-    ${Store.isCloud() && Auth.profile ? `<span style="font-size:12.5px;color:var(--muted);white-space:nowrap">${escapeHtml(Auth.profile.email)} · <span class="pill green">${escapeHtml(role)}</span></span>` : ''}
+    ${Store.isCloud() && Auth.profile ? `<span style="font-size:12.5px;color:var(--muted);white-space:nowrap">${escapeHtml(Auth.profile.email)} · <span class="pill green">${escapeHtml(Auth.profile.role_title || role)}</span></span>` : ''}
     <button class="icon-btn" id="themeBtn" title="Toggle dark/light">${icon(state.theme==='dark'?'sun':'moon',17)}</button>
     ${Store.isCloud() ? `<button class="icon-btn" id="changePwBtn" title="Change my password">${icon('settings',17)}</button>` : ''}
     ${Store.isCloud() ? `<button class="icon-btn" id="signOutBtn" title="Sign out">${icon('logout',17)}</button>` : ''}
@@ -1605,7 +1716,7 @@ function render(){
   }
   applyBrand(state.route==='settings' && brandDraft ? brandDraft : (state.settings && state.settings.brand));
   if(state.route!=='settings') brandDraft = null;
-  if(state.route!=='settings') rulesDraft = null;
+  if(state.route!=='settings'){ rulesDraft = null; rolesDraft = null; }
   if(Store.isCloud()){
     if(!Auth.ready){
       document.getElementById('app').innerHTML = `<div style="padding:60px;text-align:center;color:var(--muted)">Loading…</div>`;
@@ -2231,9 +2342,10 @@ const DELEGABLE = [
 function can(perm){
   const role = effectiveRole();
   if(role === 'admin') return true;
-  if(role !== 'capture') return false;
   const list = (Auth.profile && Array.isArray(Auth.profile.perms)) ? Auth.profile.perms : [];
-  return list.includes(perm);
+  if(role === 'capture') return list.includes(perm);
+  if(role === 'viewer') return perm === 'activity' && list.includes(perm);   // a read-only role can at most read the activity log
+  return false;
 }
 function canCapture(){ return ['admin','capture'].includes(effectiveRole()); }
 
@@ -3000,8 +3112,7 @@ function wireAttendance(){
 function currentFiscalMonthGuessFromDate(dateStr){
   const d = new Date(dateStr);
   if(isNaN(d)) return currentFiscalMonthGuess();
-  const map = [2,3,4,5,6,7,8,9,10,11,12,1];
-  return MONTHS[map[d.getMonth()]-1];
+  return MON_SHORT[d.getMonth()];
 }
 /* ---------------------------------------------------------------------
    VIEW: REPORTS  (Monthly Report equivalent, printable)
@@ -3077,7 +3188,7 @@ function viewNewYear(){
   return `
   <div class="card">
     <h2><span class="dot"></span>1. Back-2-School distribution</h2>
-    <p class="sub">Run this whenever you're ready — typically early January. Pays out each member's accumulated B2S fund and resets it to zero to start collecting again. Doesn't touch anything else in the ledger.</p>
+    <p class="sub">Run this whenever you're ready — typically early in the new financial year. Pays out each member's accumulated B2S fund and resets it to zero to start collecting again. Doesn't touch anything else in the ledger.</p>
     ${b2sRows.length===0 ? `<div class="empty">No B2S funds accumulated yet.</div>` : `
     <div class="tablewrap" style="max-height:220px;overflow-y:auto"><table>
       <thead><tr><th>Member</th><th class="num">B2S accumulated</th></tr></thead>
@@ -3355,6 +3466,7 @@ function viewSettings(){
   return `
   ${brandCardHtml()}
   ${rulesCardHtml()}
+  ${rolesCardHtml()}
   <div class="card">
     <h2><span class="dot"></span>Club details</h2>
     <div class="grid g2">
@@ -3434,6 +3546,7 @@ function viewSettings(){
 function wireSettings(){
   wireBrandCard();
   wireRulesCard();
+  wireRolesCard();
   document.getElementById('saveSettingsBtn').onclick = async () => {
     const g = id => document.getElementById(id);
     Object.assign(state.settings, {
@@ -3969,18 +4082,20 @@ function viewUsers(){
     <p class="sub">After you invite an email, that person creates their own login on the sign-in screen with the same email. They then appear below as "pending" and you give them a role.</p>
     ${rows.length===0 ? `<div class="empty">No users found yet, or still loading.</div>` : `
     <div class="tablewrap"><table>
-      <thead><tr><th>Email</th><th>Role</th><th>Linked member <span class="hint">(for "member" role)</span></th><th>Extra abilities <span class="hint">(capture only)</span></th><th></th></tr></thead>
+      <thead><tr><th>Email</th><th>Role</th><th>Linked member <span class="hint">(for "member" role)</span></th><th>Extra abilities <span class="hint">(capture and viewer)</span></th><th></th></tr></thead>
       <tbody>
         ${rows.map(u => `<tr>
           <td>${escapeHtml(u.email||u.id)}${u.role==='pending'?' <span class="pill orange">Pending</span>':''}</td>
           <td><select data-role="${u.id}">
-            ${['pending','admin','capture','member','auditor'].map(r => `<option value="${r}" ${u.role===r?'selected':''}>${r[0].toUpperCase()+r.slice(1)}</option>`).join('')}
+            ${(() => { const cr = rules().roles, cur = cr.find(c => c.name === u.role_title && c.base === u.role);
+              return ['pending','admin','capture','viewer','member','auditor'].map(r => `<option value="${r}" ${(!cur && u.role===r)?'selected':''}>${r==='viewer'?'Viewer (read-only)':r[0].toUpperCase()+r.slice(1)}</option>`).join('')
+                + (cr.length ? `<optgroup label="This club's roles">${cr.map(c => `<option value="r:${escapeHtml(c.id)}" ${cur&&cur.id===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</optgroup>` : ''); })()}
           </select></td>
           <td><select data-memberlink="${u.id}">
             <option value="">—</option>
             ${memberOptions(u.member_full)}
           </select></td>
-          <td>${DELEGABLE.map(d => `<label style="display:flex;gap:6px;align-items:center;font-weight:400;font-size:12.5px;margin:2px 0" title="${escapeHtml(d.hint)}"><input type="checkbox" data-perm="${u.id}" value="${d.key}" ${(u.perms||[]).includes(d.key)?'checked':''} ${u.role==='capture'?'':'disabled'}> ${escapeHtml(d.label)}</label>`).join('')}</td>
+          <td>${DELEGABLE.map(d => `<label style="display:flex;gap:6px;align-items:center;font-weight:400;font-size:12.5px;margin:2px 0" title="${escapeHtml(d.hint)}"><input type="checkbox" data-perm="${u.id}" value="${d.key}" ${(u.perms||[]).includes(d.key)?'checked':''} ${(u.role==='capture' && !rules().roles.some(c=>c.name===u.role_title&&c.base==='capture')) || (u.role==='viewer' && d.key==='activity' && !rules().roles.some(c=>c.name===u.role_title&&c.base==='viewer'))?'':'disabled'}> ${escapeHtml(d.label)}</label>`).join('')}</td>
           <td><button class="btn secondary sm" data-saveuser="${u.id}">Save</button>
               <button class="btn secondary sm" data-resetpw="${u.id}" data-email="${escapeHtml(u.email||'')}">Reset password</button></td>
         </tr>`).join('')}
@@ -4006,16 +4121,29 @@ function wireUsers(){
   const refresh = document.getElementById('refreshUsersBtn');
   if(refresh) refresh.onclick = async () => { await loadProfilesCache(); render(); };
 
-  document.querySelectorAll('[data-role]').forEach(sel => { sel.onchange = () => { document.querySelectorAll(`[data-perm="${sel.dataset.role}"]`).forEach(c => { c.disabled = sel.value !== 'capture'; if(sel.value !== 'capture') c.checked = false; }); }; });
+  // What a chosen role means: a built-in role, or one of the club's own (a base role plus a fixed set of abilities).
+  const resolveRole = (val) => {
+    if(String(val).startsWith('r:')){ const c = rules().roles.find(x => 'r:'+x.id === val); if(c) return {role:c.base, perms:c.perms.slice(), title:c.name, fixed:true}; }
+    return {role:val, perms:null, title:null, fixed:false};
+  };
+  document.querySelectorAll('[data-role]').forEach(sel => { sel.onchange = () => {
+    const r = resolveRole(sel.value), allowed = rolePermKeys(r.role);
+    document.querySelectorAll(`[data-perm="${sel.dataset.role}"]`).forEach(c => {
+      if(r.fixed){ c.checked = r.perms.includes(c.value); c.disabled = true; }
+      else { c.disabled = !allowed.includes(c.value); if(c.disabled) c.checked = false; }
+    });
+  }; });
   document.querySelectorAll('[data-saveuser]').forEach(btn => {
     btn.onclick = async () => {
       const id = btn.dataset.saveuser;
-      const role = document.querySelector(`[data-role="${id}"]`).value;
+      const chosen = resolveRole(document.querySelector(`[data-role="${id}"]`).value);
+      const role = chosen.role;
       const memberFull = document.querySelector(`[data-memberlink="${id}"]`).value;
-      const perms = role==='capture' ? [...document.querySelectorAll(`[data-perm="${id}"]:checked`)].map(c => c.value) : [];
+      const allowed = rolePermKeys(role);
+      const perms = chosen.fixed ? chosen.perms : [...document.querySelectorAll(`[data-perm="${id}"]:checked`)].map(c => c.value).filter(k => allowed.includes(k));
       try{
         await Store.cloudFetch('mk_profiles?id=eq.' + encodeURIComponent(id), {
-          method:'PATCH', body: JSON.stringify({role, member_full: role==='member' ? memberFull : null, perms})
+          method:'PATCH', body: JSON.stringify({role, role_title: chosen.title, member_full: role==='member' ? memberFull : null, perms})
         });
         toast('Saved.');
         await loadProfilesCache();
