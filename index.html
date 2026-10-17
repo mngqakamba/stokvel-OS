@@ -3972,13 +3972,14 @@ function renderOwnerShell(){
           <td>${escapeHtml(c.contact_name||'')}<br><span class="hint">${escapeHtml(c.contact_email||'')} ${escapeHtml(c.contact_phone||'')}</span></td>
           <td>${fmtDate(c.created_at)}</td><td>${pill(c.status)}${c.terms_accepted_at?'':' <span class="hint" title="Terms not recorded as accepted">no terms</span>'}</td>
           <td>${escapeHtml(c.plan||'trial')}<br><span class="hint">${c.plan==='trial' ? (c.trial_ends?'trial to '+fmtDate(c.trial_ends):'') : (c.paid_until?'paid to '+fmtDate(c.paid_until):'')}</span></td>
-          <td style="white-space:nowrap"><button class="btn secondary sm" data-clubbill="${c.id}">Billing</button> ${c.status==='active'
+          <td style="white-space:nowrap"><button class="btn secondary sm" data-clubbill="${c.id}">Billing</button> <button class="btn secondary sm" data-clubmfa="${c.id}" title="Remove the admin's two-step login">Reset 2-step</button> ${c.status==='active'
             ? `<button class="btn secondary sm" data-clubset="${c.id}" data-st="suspended">Suspend</button>`
             : `<button class="btn sm" data-clubset="${c.id}" data-st="active">${c.status==='suspended'?'Reactivate':'Approve'}</button>`}</td>
         </tr>`).join('')}</tbody></table></div>`}
     </div></main>`;
   document.getElementById('ownerRefresh').onclick = async () => { await loadOwnerClubs(); render(); };
   document.getElementById('ownerOut').onclick = async () => { ownerClubs = null; await Auth.signOut(); render(); };
+  document.querySelectorAll('[data-clubmfa]').forEach(b => b.onclick = () => openResetMfaModal(ownerClubs.find(c => c.id === b.dataset.clubmfa)));
   document.querySelectorAll('[data-clubbill]').forEach(b => b.onclick = () => openClubBillingModal(ownerClubs.find(c => c.id === b.dataset.clubbill)));
   document.querySelectorAll('[data-clubset]').forEach(b => b.onclick = async () => {
     try{ await Store.cloudFetch('rpc/mk_set_club_status', {method:'POST', body: JSON.stringify({p_club:b.dataset.clubset, p_status:b.dataset.st})}); toast('Updated.'); }
@@ -3987,6 +3988,33 @@ function renderOwnerShell(){
   });
 }
 
+function openResetMfaModal(c){
+  if(!c) return;
+  const back = document.createElement('div'); back.className = 'modal-backdrop';
+  back.innerHTML = `<div class="modal"><h3>Reset two-step login: ${escapeHtml(c.name)}</h3>
+    <p class="sub">Use this when the club admin has lost the phone with their authenticator app. They will be able to sign in with just their password and set up two-step login again. <b>First make sure it really is them</b>, for example by phoning the number they registered with.</p>
+    <div style="margin-top:10px"><label>Admin's email</label><input type="text" id="mfaEmail" value="${escapeHtml(c.contact_email||'')}"></div>
+    <p id="mfaErr" style="color:var(--red);font-size:13px;display:none"></p>
+    <div class="btnrow"><button class="btn secondary" id="mfaCancel">Cancel</button><button class="btn danger" id="mfaDo">Reset two-step login</button></div></div>`;
+  document.body.appendChild(back);
+  back.querySelector('#mfaCancel').onclick = () => back.remove();
+  back.querySelector('#mfaDo').onclick = async () => {
+    const email = back.querySelector('#mfaEmail').value.trim();
+    const err = back.querySelector('#mfaErr');
+    if(!email){ err.textContent = 'Enter the admin\'s email.'; err.style.display = 'block'; return; }
+    try{
+      const res = await fetch(Store.cloud.url + '/functions/v1/admin-reset-mfa', {
+        method:'POST',
+        headers:{ 'Authorization':'Bearer ' + Auth.accessToken(), 'apikey': Store.cloud.key, 'Content-Type':'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error(data.error || ('Request failed (' + res.status + ')'));
+      back.remove();
+      toast(data.removed ? `Two-step login removed for ${email}. They can sign in with their password now.` : `${email} did not have two-step login switched on.`);
+    }catch(e){ err.textContent = e.message || 'Could not reset. Has the admin-reset-mfa function been deployed?'; err.style.display = 'block'; }
+  };
+}
 function openClubBillingModal(c){
   if(!c) return;
   const back = document.createElement('div'); back.className = 'modal-backdrop';
