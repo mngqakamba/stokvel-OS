@@ -236,6 +236,97 @@ function supportLinkHtml(){
   if(wa) parts.push(`<a href="https://wa.me/${wa}" target="_blank" rel="noopener">WhatsApp us</a>`);
   return parts.join(' &middot; ');
 }
+const DEFAULT_BILLING = {
+  currency: 'R', referencePrefix: 'STK', invoiceNote: '', payDays: 7,
+  plans: [
+    {id:'small',    name:'Small',    maxMembers:25,   monthly:99,  annual:990},
+    {id:'standard', name:'Standard', maxMembers:60,   monthly:199, annual:1990},
+    {id:'large',    name:'Large',    maxMembers:null, monthly:349, annual:3490},
+  ],
+  bank: {}
+};
+function billingCfg(){
+  const b = (typeof window!=='undefined' && window.SAAS_CONFIG && window.SAAS_CONFIG.billing) || {};
+  const plans = (Array.isArray(b.plans) && b.plans.length ? b.plans : DEFAULT_BILLING.plans).filter(x => x && x.id && x.name).map(x => ({
+    id:String(x.id), name:String(x.name), maxMembers: (x.maxMembers==null||x.maxMembers==='') ? null : Math.max(1, Math.floor(Number(x.maxMembers))||1),
+    monthly: Number(x.monthly)||0, annual: Number(x.annual)||0 }));
+  const bank = {}; ['accountName','bank','accountNumber','branchCode','accountType'].forEach(k => { const v = String((b.bank||{})[k]==null?'':(b.bank||{})[k]).trim(); if(v && !/^\[.*\]$/.test(v)) bank[k] = v; });
+  return { currency: String(b.currency||DEFAULT_BILLING.currency), referencePrefix: String(b.referencePrefix||DEFAULT_BILLING.referencePrefix),
+           invoiceNote: String(b.invoiceNote||''), payDays: Number(b.payDays)||DEFAULT_BILLING.payDays, plans, bank };
+}
+function money(n){ const c = billingCfg().currency; return c + Number(n||0).toLocaleString('en-ZA', {maximumFractionDigits:2}); }
+function clubReference(club){ const c = club || Auth.club || {}; return billingCfg().referencePrefix + '-' + String(c.id||'').replace(/-/g,'').slice(0,6).toUpperCase(); }
+function planById(id){ return billingCfg().plans.find(x => x.id === id) || null; }
+function planLimitText(pl){ return pl.maxMembers ? 'up to ' + pl.maxMembers + ' members' : 'any number of members'; }
+function bankDetailsHtml(){
+  const bk = billingCfg().bank, rows = [['Account name','accountName'],['Bank','bank'],['Account number','accountNumber'],['Branch code','branchCode'],['Account type','accountType']].filter(r => bk[r[1]]);
+  if(!rows.length) return '<p class="hint">Banking details have not been added yet. Please contact us to arrange payment.</p>';
+  return '<table style="width:auto;border-collapse:collapse;font-size:14px">' + rows.map(r => `<tr><td style="padding:3px 16px 3px 0;color:var(--muted)">${r[0]}</td><td style="padding:3px 0;font-weight:600">${escapeHtml(bk[r[1]])}</td></tr>`).join('') + '</table>';
+}
+function openInvoice(club, planId, period){
+  const pl = planById(planId); if(!pl){ toast('Choose a plan first.', true); return; }
+  const amount = period === 'annual' ? pl.annual : pl.monthly;
+  const cfg = billingCfg(), ref = clubReference(club), today = new Date(), due = new Date(Date.now() + cfg.payDays*864e5);
+  const d = x => x.toLocaleDateString('en-ZA', {day:'2-digit', month:'long', year:'numeric'});
+  const bk = cfg.bank, biz = k => bizVal(k);
+  const no = ref + '-' + today.toISOString().slice(0,10).replace(/-/g,'');
+  const w = window.open('', '_blank');
+  if(!w){ toast('Your browser blocked the invoice window. Allow pop-ups for this site and try again.', true); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Invoice ${escapeHtml(no)}</title><style>
+  body{font:15px/1.5 system-ui,Segoe UI,Arial,sans-serif;color:#1c2a22;max-width:720px;margin:30px auto;padding:0 20px}
+  h1{margin:0 0 4px;font-size:26px}.m{color:#5b6b62;font-size:13.5px}table{width:100%;border-collapse:collapse;margin:18px 0}
+  th,td{padding:9px 10px;border-bottom:1px solid #dfe6e1;text-align:left}th:last-child,td:last-child{text-align:right}
+  .tot td{font-weight:700;font-size:17px;border-bottom:none}.box{background:#f4f7f5;border-radius:10px;padding:12px 16px;margin-top:10px}
+  .row{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}@media print{.np{display:none}}</style></head><body>
+  <div class="row"><div><h1>Invoice</h1><div class="m">No. ${escapeHtml(no)}<br>Date: ${d(today)}<br>Due: ${d(due)}</div></div>
+  <div style="text-align:right"><b>${escapeHtml(biz('name')||biz('tradingAs')||'')}</b><div class="m">${escapeHtml(biz('address')||'')}<br>${escapeHtml(biz('email')||'')} ${escapeHtml(biz('phone')||'')}</div></div></div>
+  <div class="box"><b>Billed to</b><br>${escapeHtml(club.name||'')}<br><span class="m">${escapeHtml(club.contact_name||'')} ${escapeHtml(club.contact_email||'')}</span></div>
+  <table><thead><tr><th>Description</th><th>Amount</th></tr></thead><tbody>
+  <tr><td>${escapeHtml(biz('tradingAs')||'Stokvel management')} &ndash; ${escapeHtml(pl.name)} plan (${escapeHtml(planLimitText(pl))}), ${period==='annual'?'12 months':'1 month'}</td><td>${escapeHtml(money(amount))}</td></tr>
+  <tr class="tot"><td>Total due</td><td>${escapeHtml(money(amount))}</td></tr></tbody></table>
+  <div class="box"><b>How to pay (EFT)</b><br>${Object.keys(bk).length ? [['Account name','accountName'],['Bank','bank'],['Account number','accountNumber'],['Branch code','branchCode'],['Account type','accountType']].filter(r=>bk[r[1]]).map(r=>`${r[0]}: <b>${escapeHtml(bk[r[1]])}</b>`).join('<br>') : 'Please contact us for banking details.'}<br>Reference: <b>${escapeHtml(ref)}</b></div>
+  ${cfg.invoiceNote ? `<p class="m">${escapeHtml(cfg.invoiceNote)}</p>` : ''}
+  <p class="m">Please use the reference above so we can match your payment. Your subscription is extended once payment is received.</p>
+  <p class="np"><button onclick="window.print()" style="padding:9px 18px;font-size:15px;cursor:pointer">Print or save as PDF</button></p>
+  </body></html>`);
+  w.document.close();
+}
+function subscriptionCardHtml(){
+  if(effectiveRole() !== 'admin' || !Auth.club) return '';
+  const c = Auth.club, cfg = billingCfg(), pl = planById(c.tier);
+  const used = state.members.filter(m => !m.resigned).length;
+  const limit = c.member_limit || (pl && pl.maxMembers) || null;
+  const st = billingInfo();
+  const planName = {trial:'Free trial', monthly:'Monthly', annual:'Annual', free:'Free', cancelled:'Cancelled'}[c.plan] || c.plan;
+  const until = c.plan==='trial' ? (c.trial_ends ? 'Trial ends ' + fmtDate(c.trial_ends) : '') : (c.paid_until ? 'Paid until ' + fmtDate(c.paid_until) : '');
+  const sup = supportLinkHtml();
+  const suggested = (pl && pl.id) || (cfg.plans.find(x => !x.maxMembers || x.maxMembers >= used) || cfg.plans[cfg.plans.length-1] || {}).id;
+  return `
+  <div class="card" id="subCard">
+    <h2><span class="dot"></span>Subscription</h2>
+    ${st ? `<p style="font-weight:600;color:${st.tone==='red'?'var(--red)':st.tone==='orange'?'#c77700':'var(--accent)'}">${escapeHtml(st.text)}</p>` : ''}
+    <div class="grid g3" style="margin:6px 0 12px">
+      <div><label>Billing</label><div>${escapeHtml(planName)}${pl ? ' &middot; ' + escapeHtml(pl.name) + ' plan' : ''}</div><div class="hint">${escapeHtml(until)}</div></div>
+      <div><label>Members</label><div>${used}${limit ? ' of ' + limit : ''} <span class="hint">active members${limit ? '' : ', no limit'}</span></div></div>
+      <div><label>Payment reference</label><div style="font-weight:700">${escapeHtml(clubReference())}</div></div>
+    </div>
+    <label>Plans</label>
+    <div class="tablewrap"><table><thead><tr><th>Plan</th><th>Size</th><th class="num">Monthly</th><th class="num">Annual</th></tr></thead><tbody>
+      ${cfg.plans.map(x => `<tr${x.id===c.tier?' style="font-weight:700"':''}><td>${escapeHtml(x.name)}${x.id===c.tier?' <span class="pill green">Current</span>':''}</td><td>${escapeHtml(planLimitText(x))}</td><td class="num">${escapeHtml(money(x.monthly))}</td><td class="num">${escapeHtml(money(x.annual))}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="grid g3" style="margin-top:12px;align-items:end">
+      <div><label>Plan</label><select id="invPlan">${cfg.plans.map(x => `<option value="${escapeHtml(x.id)}" ${x.id===suggested?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}</select></div>
+      <div><label>Pay</label><select id="invPeriod"><option value="annual">Annual</option><option value="monthly">Monthly</option></select></div>
+      <div><button class="btn" id="invBtn">${icon('file',15)} View invoice</button></div>
+    </div>
+    <div style="margin-top:14px"><label>How to pay (EFT)</label>${bankDetailsHtml()}
+      <p class="hint" style="margin-top:6px">Use <b>${escapeHtml(clubReference())}</b> as the payment reference, then email your proof of payment${sup?' (' + sup + ')':''}. Your subscription is extended once we receive it.</p></div>
+  </div>`;
+}
+function wireSubscriptionCard(){
+  const b = document.getElementById('invBtn'); if(!b) return;
+  b.onclick = () => openInvoice(Auth.club, document.getElementById('invPlan').value, document.getElementById('invPeriod').value);
+}
 function addLegalFooter(){
   const app = document.getElementById('app'); if(!app) return;
   const old = document.getElementById('legalFoot'); if(old) old.remove();
@@ -1624,7 +1715,7 @@ function billingInfo(){
     if(!c.trial_ends) return null;
     const n = days(c.trial_ends);
     if(n > 0) return {tone: n<=7?'orange':'blue', text:`Free trial: ${n} day${n===1?'':'s'} left (ends ${fmtDate(c.trial_ends)}).`};
-    return {tone:'red', text:`Your free trial ended on ${fmtDate(c.trial_ends)}. Please contact us to subscribe so the club keeps access.`};
+    return {tone:'red', text:`Your free trial ended on ${fmtDate(c.trial_ends)}. Please subscribe (Settings > Subscription) so the club keeps access.`};
   }
   if(!c.paid_until) return null;
   const n = days(c.paid_until);
@@ -3540,6 +3631,7 @@ function viewSettings(){
   const s = state.settings;
   const c = Store.cloud;
   return `
+  ${subscriptionCardHtml()}
   ${brandCardHtml()}
   ${rulesCardHtml()}
   ${rolesCardHtml()}
@@ -3623,6 +3715,7 @@ function wireSettings(){
   wireBrandCard();
   wireRulesCard();
   wireRolesCard();
+  wireSubscriptionCard();
   document.getElementById('saveSettingsBtn').onclick = async () => {
     const g = id => document.getElementById(id);
     Object.assign(state.settings, {
@@ -3971,7 +4064,7 @@ function renderOwnerShell(){
           <td>${escapeHtml(c.name)}</td>
           <td>${escapeHtml(c.contact_name||'')}<br><span class="hint">${escapeHtml(c.contact_email||'')} ${escapeHtml(c.contact_phone||'')}</span></td>
           <td>${fmtDate(c.created_at)}</td><td>${pill(c.status)}${c.terms_accepted_at?'':' <span class="hint" title="Terms not recorded as accepted">no terms</span>'}</td>
-          <td>${escapeHtml(c.plan||'trial')}<br><span class="hint">${c.plan==='trial' ? (c.trial_ends?'trial to '+fmtDate(c.trial_ends):'') : (c.paid_until?'paid to '+fmtDate(c.paid_until):'')}</span></td>
+          <td>${escapeHtml(c.plan||'trial')}${c.tier?' &middot; '+escapeHtml(c.tier):''}${c.member_limit?' <span class="hint">(max '+c.member_limit+')</span>':''}<br><span class="hint">${c.plan==='trial' ? (c.trial_ends?'trial to '+fmtDate(c.trial_ends):'') : (c.paid_until?'paid to '+fmtDate(c.paid_until):'')}</span></td>
           <td style="white-space:nowrap"><button class="btn secondary sm" data-clubbill="${c.id}">Billing</button> <button class="btn secondary sm" data-clubmfa="${c.id}" title="Remove the admin's two-step login">Reset 2-step</button> ${c.status==='active'
             ? `<button class="btn secondary sm" data-clubset="${c.id}" data-st="suspended">Suspend</button>`
             : `<button class="btn sm" data-clubset="${c.id}" data-st="active">${c.status==='suspended'?'Reactivate':'Approve'}</button>`}</td>
@@ -4020,7 +4113,9 @@ function openClubBillingModal(c){
   const back = document.createElement('div'); back.className = 'modal-backdrop';
   back.innerHTML = `<div class="modal"><h3>Billing: ${escapeHtml(c.name)}</h3>
     <div class="grid" style="gap:12px;margin-top:10px">
-      <div><label>Plan</label><select id="bPlan">${['trial','monthly','annual','free','cancelled'].map(x=>`<option ${c.plan===x?'selected':''}>${x}</option>`).join('')}</select></div>
+      <div><label>Billing</label><select id="bPlan">${['trial','monthly','annual','free','cancelled'].map(x=>`<option ${c.plan===x?'selected':''}>${x}</option>`).join('')}</select></div>
+      <div><label>Plan size <span class="hint">sets the member limit</span></label><select id="bTier"><option value="">No plan size (no limit)</option>${billingCfg().plans.map(x=>`<option value="${escapeHtml(x.id)}" ${c.tier===x.id?'selected':''}>${escapeHtml(x.name)} (${escapeHtml(planLimitText(x))}) ${escapeHtml(money(x.monthly))}/month, ${escapeHtml(money(x.annual))}/year</option>`).join('')}</select></div>
+      <div><label>Member limit <span class="hint">empty = no limit; you can override the plan's limit</span></label><input type="number" min="1" step="1" id="bLimit" value="${c.member_limit||''}"></div>
       <div><label>Paid until <span class="hint">leave empty for trial or free</span></label><input type="date" id="bPaid" value="${c.paid_until?String(c.paid_until).slice(0,10):''}"></div>
       <div><label>Note <span class="hint">e.g. EFT reference</span></label><input type="text" id="bNote" value="${escapeHtml(c.billing_note||'')}"></div>
     </div>
@@ -4028,9 +4123,10 @@ function openClubBillingModal(c){
     <div class="btnrow"><button class="btn secondary" id="bCancel">Cancel</button><button class="btn" id="bSave">Save</button></div></div>`;
   document.body.appendChild(back);
   back.querySelector('#bCancel').onclick = () => back.remove();
+  back.querySelector('#bTier').onchange = (e) => { const pl = planById(e.target.value); back.querySelector('#bLimit').value = pl && pl.maxMembers ? pl.maxMembers : ''; };
   back.querySelector('#bSave').onclick = async () => {
     try{
-      await Store.cloudFetch('rpc/mk_set_club_billing', {method:'POST', body: JSON.stringify({p_club:c.id, p_plan:back.querySelector('#bPlan').value, p_paid_until: back.querySelector('#bPaid').value || null, p_note: back.querySelector('#bNote').value})});
+      await Store.cloudFetch('rpc/mk_set_club_billing', {method:'POST', body: JSON.stringify({p_club:c.id, p_plan:back.querySelector('#bPlan').value, p_paid_until: back.querySelector('#bPaid').value || null, p_note: back.querySelector('#bNote').value, p_tier: back.querySelector('#bTier').value || null, p_member_limit: back.querySelector('#bLimit').value ? Math.floor(Number(back.querySelector('#bLimit').value)) : null})});
       back.remove(); toast('Billing saved.'); await loadOwnerClubs(); render();
     }catch(e){ const el = back.querySelector('#bErr'); el.textContent = e.message; el.style.display = 'block'; }
   };
