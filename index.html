@@ -219,6 +219,36 @@ const DEFAULT_CLOUD = {
   key: (typeof window!=='undefined' && window.SAAS_CONFIG && window.SAAS_CONFIG.key) || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFva3l6Y29jYXllZnF1ZHN0ZGJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwODkwOTcsImV4cCI6MjEwNzY2NTA5N30.pFG_3585xResdxBE9lwwEIkuwBzC3gDs9D5wWrTLgcc"
 };
 
+/* ---------------------------------------------------------------------
+   BUSINESS DETAILS, LEGAL LINKS, SUPPORT  (values come from config.js)
+   --------------------------------------------------------------------- */
+const LEGAL_VERSION = '2026-10';
+function bizVal(k){
+  const b = (typeof window!=='undefined' && window.SAAS_CONFIG && window.SAAS_CONFIG.business) || {};
+  const v = String(b[k]==null?'':b[k]).trim();
+  return (v && !/^\[.*\]$/.test(v)) ? v : '';     // "[placeholder]" counts as not filled in
+}
+function supportLinkHtml(){
+  const mail = bizVal('email'), wa = bizVal('whatsapp').replace(/\D/g,'');
+  const club = (Auth && Auth.club && Auth.club.name) || '';
+  const parts = [];
+  if(mail) parts.push(`<a href="mailto:${escapeHtml(mail)}?subject=${encodeURIComponent('Support request' + (club?' - '+club:''))}">Help &amp; support</a>`);
+  if(wa) parts.push(`<a href="https://wa.me/${wa}" target="_blank" rel="noopener">WhatsApp us</a>`);
+  return parts.join(' &middot; ');
+}
+function addLegalFooter(){
+  const app = document.getElementById('app'); if(!app) return;
+  const old = document.getElementById('legalFoot'); if(old) old.remove();
+  const sup = supportLinkHtml();
+  const d = document.createElement('div');
+  d.id = 'legalFoot'; d.className = 'no-print';
+  d.style.cssText = 'text-align:center;font-size:12px;color:var(--muted);padding:18px 12px 28px';
+  d.innerHTML = `<a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a> &middot; <a href="terms.html" target="_blank" rel="noopener">Terms</a> &middot; <a href="dpa.html" target="_blank" rel="noopener">Data processing</a>${sup ? ' &middot; '+sup : ''}`;
+  d.querySelectorAll('a').forEach(a => { a.style.color = 'var(--accent)'; });
+  app.appendChild(d);
+}
+document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-dlmember]'); if(b) downloadMemberData(b.dataset.dlmember); });
+
 function normaliseMonth(raw){
   if(!raw) return "";
   return MONTH_ALIASES[String(raw).trim().toLowerCase()] || "";
@@ -781,6 +811,7 @@ const Auth = {
       if(!client){ this.ready = true; return; }
       const { data } = await client.auth.getSession();
       this.session = data.session || null;
+      if(this.session) await this.checkMfa();
       if(this.session) await this.loadProfile();
       if(this.session && CAME_FROM_EMAIL_LINK){ setTimeout(() => toast('Your email is confirmed. Welcome!'), 600); try{ history.replaceState(null,'',location.pathname); }catch(_){} }
       client.auth.onAuthStateChange((_event, session) => {
@@ -794,6 +825,14 @@ const Auth = {
     this.ready = true;
   },
 
+  mfaPending: false,
+  async checkMfa(){
+    // Signed in with a password, but the account has two-step login on and this session has not passed it yet.
+    try{
+      const { data } = await this.ensureClient().auth.mfa.getAuthenticatorAssuranceLevel();
+      this.mfaPending = !!(data && data.nextLevel === 'aal2' && data.currentLevel !== 'aal2');
+    }catch(e){ this.mfaPending = false; }
+  },
   async loadProfile(){
     if(!this.session){ this.profile = null; return; }
     try{
@@ -817,6 +856,7 @@ const Auth = {
     const { data, error } = await client.auth.signInWithPassword({email, password});
     if(error) throw error;
     this.session = data.session;
+    await this.checkMfa();
     await this.loadProfile();
   },
   async signUp(email, password){
@@ -830,7 +870,7 @@ const Auth = {
   async signOut(){
     const client = this.ensureClient();
     if(client) await client.auth.signOut();
-    this.session = null; this.profile = null; this.club = null; this.owner = false;
+    this.session = null; this.profile = null; this.club = null; this.owner = false; this.mfaPending = false;
     state.profilesCache = []; state.settings = Object.assign({}, SEED.settings);
     try{ localStorage.removeItem('mk_snapshot'); }catch(e){}
     state.execList = null;
@@ -940,7 +980,7 @@ const Store = {
   },
 
   async trySyncFromCloud(){
-    if(!this.isCloud() || !Auth.isApproved()) return;
+    if(!this.isCloud() || !Auth.isApproved() || Auth.mfaPending) return;
     try{
       const [members, datalog, settingsRows, attMeetings, resignations, archives, execRows] = await Promise.all([
         this.cloudFetch('mk_members?select=*'),
@@ -1574,6 +1614,31 @@ function effectiveRole(){
   return Auth.role();
 }
 
+function billingInfo(){
+  const c = Auth.club; if(!c) return null;
+  const today = new Date(todayISO()+'T00:00:00');
+  const days = (d) => Math.ceil((new Date(String(d).slice(0,10)+'T00:00:00') - today) / 86400000);
+  if(c.plan === 'free') return null;
+  if(c.plan === 'cancelled') return {tone:'red', text:'This subscription has been cancelled. Please contact us if you would like to continue.'};
+  if(c.plan === 'trial'){
+    if(!c.trial_ends) return null;
+    const n = days(c.trial_ends);
+    if(n > 0) return {tone: n<=7?'orange':'blue', text:`Free trial: ${n} day${n===1?'':'s'} left (ends ${fmtDate(c.trial_ends)}).`};
+    return {tone:'red', text:`Your free trial ended on ${fmtDate(c.trial_ends)}. Please contact us to subscribe so the club keeps access.`};
+  }
+  if(!c.paid_until) return null;
+  const n = days(c.paid_until);
+  if(n < 0) return {tone:'red', text:`Your subscription ended on ${fmtDate(c.paid_until)}. Please renew to keep access.`};
+  if(n <= 14) return {tone:'orange', text:`Your subscription ends in ${n} day${n===1?'':'s'} (${fmtDate(c.paid_until)}). Please contact us to renew.`};
+  return null;
+}
+function billingBannerHtml(){
+  if(effectiveRole() !== 'admin') return '';
+  const b = billingInfo(); if(!b) return '';
+  const col = {red:'var(--red)', orange:'#c77700', blue:'var(--accent)'}[b.tone];
+  const sup = supportLinkHtml();
+  return `<div class="no-print" style="margin:10px 20px;padding:10px 14px;border-radius:10px;border:1px solid ${col};color:${col};font-size:13.5px;font-weight:600">${escapeHtml(b.text)}${sup?` <span style="font-weight:400">${sup}</span>`:''}</div>`;
+}
 function renderShell(){
   const s = state.settings;
   const role = effectiveRole();
@@ -1598,7 +1663,7 @@ function renderShell(){
     </div>
     ${Store.isCloud() && Auth.profile ? `<span style="font-size:12.5px;color:var(--muted);white-space:nowrap">${escapeHtml(Auth.profile.email)} · <span class="pill green">${escapeHtml(Auth.profile.role_title || role)}</span></span>` : ''}
     <button class="icon-btn" id="themeBtn" title="Toggle dark/light">${icon(state.theme==='dark'?'sun':'moon',17)}</button>
-    ${Store.isCloud() ? `<button class="icon-btn" id="changePwBtn" title="Change my password">${icon('settings',17)}</button>` : ''}
+    ${Store.isCloud() ? `<button class="icon-btn" id="changePwBtn" title="My account and security">${icon('settings',17)}</button>` : ''}
     ${Store.isCloud() ? `<button class="icon-btn" id="signOutBtn" title="Sign out">${icon('logout',17)}</button>` : ''}
   </div>
 
@@ -1609,6 +1674,7 @@ function renderShell(){
     ${role==='admin' ? `<a href="#" id="openSettingsFromBar" style="color:var(--accent);font-weight:700;text-decoration:none">⚙️ Manage cloud connection</a>` : ''}
   </div>
 
+  ${billingBannerHtml()}
   <div class="navcard">
     <div class="navcard-top">
       <span class="label">NAVIGATE</span>
@@ -1659,7 +1725,7 @@ function renderMemberSelfShell(){
     </div>
     <div class="topbar-spacer"></div>
     <button class="icon-btn" id="themeBtn" title="Toggle dark/light">${icon(state.theme==='dark'?'sun':'moon',17)}</button>
-    <button class="icon-btn" id="changePwBtn" title="Change my password">${icon('settings',17)}</button>
+    <button class="icon-btn" id="changePwBtn" title="My account and security">${icon('settings',17)}</button>
     <button class="icon-btn" id="signOutBtn" title="Sign out">${icon('logout',17)}</button>
   </div>
   <main id="mainArea" style="padding:6px 20px 60px;max-width:900px;margin:0 auto"></main>
@@ -1690,7 +1756,7 @@ function renderAuditorShell(){
     </div>
     <div class="topbar-spacer"></div>
     <button class="icon-btn" id="themeBtn" title="Toggle dark/light">${icon(state.theme==='dark'?'sun':'moon',17)}</button>
-    <button class="icon-btn" id="changePwBtn" title="Change my password">${icon('settings',17)}</button>
+    <button class="icon-btn" id="changePwBtn" title="My account and security">${icon('settings',17)}</button>
     <button class="icon-btn" id="signOutBtn" title="Sign out">${icon('logout',17)}</button>
   </div>
   <main id="mainArea" style="padding:6px 20px 60px;max-width:900px;margin:0 auto"></main>
@@ -1702,7 +1768,8 @@ function renderAuditorShell(){
   document.getElementById('signOutBtn').onclick = async () => { await Auth.signOut(); render(); };
 }
 
-function render(){
+function render(){ renderCore(); addLegalFooter(); }
+function renderCore(){
   startRuleObserver();
   if(!Store.isCloud()){
     document.getElementById('app').innerHTML = `
@@ -1736,7 +1803,7 @@ function render(){
       return;
     }
     if(Auth.isOwner()){ renderOwnerShell(); return; }
-    if(!Auth.isSignedIn() || !Auth.isApproved()){
+    if(!Auth.isSignedIn() || Auth.mfaPending || !Auth.isApproved()){
       renderAuthGate();
       return;
     }
@@ -2442,6 +2509,7 @@ function viewResignationLog(){
 // Shared by the Members hub (admin/capture) and the member's own self-service view.
 function memberDetailHtml(member, opts){
   opts = opts || {};
+  const dlBtn = `<div class="no-print" style="margin-top:14px"><button class="btn secondary sm" data-dlmember="${escapeHtml(member.full)}">${icon('file',13)} Download this member's data (CSV)</button></div>`;
   const row = computeMemberRow(member);
   const history = row.entries.slice().sort((a,b)=> new Date(b.date)-new Date(a.date));
 
@@ -2559,6 +2627,7 @@ function memberDetailHtml(member, opts){
         ${(!opts.readonly && canCapture())?`<td class="no-print" style="white-space:nowrap">${h.source==='yearend'?'':`<button class="btn secondary sm" data-editdl="${escapeHtml(h.id)}">${icon('edit',12)} Correct</button> <button class="btn danger sm" data-deldl="${escapeHtml(h.id)}">${icon('trash',12)}</button>`}</td>`:''}
       </tr>`).join('')}</tbody>
     </table></div>`}
+    ${dlBtn}
   </div>`;
 }
 
@@ -3287,6 +3356,13 @@ function viewNewYear(){
 }
 
 let exportedArchiveIds = new Set();
+// POPIA "access to my information": everything recorded about one member, as a spreadsheet file.
+function downloadMemberData(full){
+  const m = state.members.find(x => x.full === full);
+  const rows = state.datalog.filter(d => d.name === full).concat([].concat(...(state.archives||[]).map(a => (a.datalog||[]).filter(d => d.name === full))));
+  const head = `Member data export\r\nClub,${csvCell((state.settings&&state.settings.clubName)||'')}\r\nMember,${csvCell(full)}\r\nMonthly contribution,${csvCell(m?m.fixed:'')}\r\nExported,${todayISO()}\r\n\r\n`;
+  downloadFile(`my-records-${todayISO()}.csv`, head + archiveCsv({datalog: rows}), 'text/csv');
+}
 
 function csvCell(v){ const t = String(v==null?'':v); return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g,'""') + '"' : t; }
 function downloadFile(name, text, mime){
@@ -3590,9 +3666,15 @@ function wireSettings(){
     }catch(e){ toast('Could not add: ' + e.message, true); }
   };
 
-  document.getElementById('exportBtn').onclick = () => {
-    const blob = new Blob([JSON.stringify({members:state.members, datalog:state.datalog, settings:state.settings,
-      attMeetings:state.attMeetings, resignations:state.resignations, archives:state.archives}, null, 2)], {type:'application/json'});
+  document.getElementById('exportBtn').onclick = async () => {
+    // The whole club in one file: the screens' data plus audits, bank visits, executives and the user list.
+    const extra = {};
+    for(const t of ['mk_audits','mk_bank_trips','mk_bank_loans','mk_executives']){
+      try{ extra[t] = await Store.cloudFetch(t + '?select=*'); }catch(e){ extra[t] = []; }
+    }
+    try{ extra.users = (await Store.cloudFetch('mk_profiles?select=email,role,role_title,member_full,perms')) || []; }catch(e){ extra.users = []; }
+    const blob = new Blob([JSON.stringify({exportedAt: new Date().toISOString(), club: (Auth.club&&Auth.club.name)||'', members:state.members, datalog:state.datalog, settings:state.settings,
+      attMeetings:state.attMeetings, resignations:state.resignations, archives:state.archives, extra}, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `club-backup-${todayISO()}.json`;
@@ -3773,6 +3855,7 @@ function renderAuthGate(){
     wireLoginScreen();
     return;
   }
+  if(Auth.mfaPending){ app.innerHTML = mfaScreenHtml(); wireMfaScreen(); return; }
   if(!Auth.profile || !Auth.profile.club_id){ app.innerHTML = registerClubHtml(); wireRegisterClub(); return; }
   if(Auth.clubStatus() !== 'active'){ app.innerHTML = clubStatusHtml(); wirePendingScreen(); return; }
   app.innerHTML = pendingScreenHtml();
@@ -3780,6 +3863,39 @@ function renderAuthGate(){
 }
 
 /* ---------------- Register a club / waiting for approval ---------------- */
+function mfaScreenHtml(){
+  return authShellWrap(`
+    <div class="card">
+      <h2><span class="dot"></span>Two-step login</h2>
+      <p class="sub">Open your authenticator app and type the 6-digit code it shows for this account.</p>
+      <div><label>6-digit code</label><input type="text" id="mfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456"></div>
+      ${authError ? `<p style="color:var(--red);font-size:13px;margin-top:10px">${escapeHtml(authError)}</p>` : ''}
+      <div class="btnrow" style="margin-top:16px">
+        <button class="btn" id="mfaGo" ${authBusy?'disabled':''}>Verify</button>
+        <button class="btn secondary" id="authSignOutBtn">Sign out</button>
+      </div>
+    </div>`);
+}
+function wireMfaScreen(){
+  wirePendingScreen();
+  const go = async () => {
+    const code = document.getElementById('mfaCode').value.replace(/\s/g,'');
+    if(!/^\d{6}$/.test(code)){ authError = 'Type the 6-digit code.'; renderAuthGate(); return; }
+    authBusy = true; authError = ''; renderAuthGate();
+    try{
+      const c = Auth.ensureClient();
+      const { data: fl, error: fe } = await c.auth.mfa.listFactors(); if(fe) throw fe;
+      const f = (fl.totp || [])[0]; if(!f) throw new Error('No authenticator is set up for this account.');
+      const { error } = await c.auth.mfa.challengeAndVerify({ factorId: f.id, code }); if(error) throw error;
+      Auth.mfaPending = false;
+      await Auth.loadProfile(); await Store.trySyncFromCloud();
+    }catch(e){ authError = (e.message || 'That code was not accepted.'); }
+    authBusy = false; render();
+  };
+  document.getElementById('mfaGo').onclick = go;
+  const inp = document.getElementById('mfaCode'); inp.onkeydown = (e) => { if(e.key==='Enter') go(); }; inp.focus();
+}
+
 function registerClubHtml(){
   return authShellWrap(`
     <div class="card">
@@ -3790,6 +3906,7 @@ function registerClubHtml(){
         <div><label>Your name</label><input type="text" id="rcContact"></div>
         <div><label>Phone number</label><input type="text" id="rcPhone" placeholder="So we can reach you about approval"></div>
       </div>
+ <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;font-size:13px;margin-top:12px"><input type="checkbox" id="rcAgree" style="margin-top:3px"><span>On behalf of the club, I accept the <a href="terms.html" target="_blank" rel="noopener">terms of use</a> and the <a href="dpa.html" target="_blank" rel="noopener">data processing agreement</a>, and confirm the club will tell its members what information is recorded.</span></label>
       ${authError ? `<p style="color:var(--red);font-size:13px;margin-top:10px">${escapeHtml(authError)}</p>` : ''}
       <div class="btnrow" style="margin-top:16px">
         <button class="btn" id="rcBtn" ${authBusy?'disabled':''}>Submit for approval</button>
@@ -3805,10 +3922,12 @@ function wireRegisterClub(){
   b.onclick = async () => {
     const name = document.getElementById('rcName').value.trim();
     if(name.length < 2){ authError = 'Enter your club name.'; renderAuthGate(); return; }
+    if(!document.getElementById('rcAgree').checked){ authError = 'Please accept the terms and the data processing agreement.'; renderAuthGate(); return; }
     authBusy = true; authError = ''; renderAuthGate();
     try{
       await Store.cloudFetch('rpc/mk_register_club', {method:'POST', body: JSON.stringify({
         p_name: name, p_contact: document.getElementById('rcContact').value.trim(), p_phone: document.getElementById('rcPhone').value.trim()})});
+      try{ await Store.cloudFetch('rpc/mk_accept_terms', {method:'POST', body: JSON.stringify({p_version: LEGAL_VERSION})}); }catch(_){ /* recorded best-effort */ }
       await Auth.loadProfile();
     }catch(e){ let m = e.message||''; try{ m = JSON.parse(m.slice(m.indexOf('{'))).message || m; }catch(_){} authError = m || 'Could not register.'; }
     authBusy = false; render();
@@ -3847,23 +3966,46 @@ function renderOwnerShell(){
       <p class="sub">You can approve or pause clubs. Club records themselves are not visible to you.</p>
       ${ownerClubs.length===0 ? `<div class="empty">No clubs have registered yet.</div>` : `
       <div class="tablewrap"><table>
-        <thead><tr><th>Club</th><th>Contact</th><th>Registered</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Club</th><th>Contact</th><th>Registered</th><th>Status</th><th>Plan</th><th></th></tr></thead>
         <tbody>${ownerClubs.map(c => `<tr>
           <td>${escapeHtml(c.name)}</td>
           <td>${escapeHtml(c.contact_name||'')}<br><span class="hint">${escapeHtml(c.contact_email||'')} ${escapeHtml(c.contact_phone||'')}</span></td>
-          <td>${fmtDate(c.created_at)}</td><td>${pill(c.status)}</td>
-          <td>${c.status==='active'
+          <td>${fmtDate(c.created_at)}</td><td>${pill(c.status)}${c.terms_accepted_at?'':' <span class="hint" title="Terms not recorded as accepted">no terms</span>'}</td>
+          <td>${escapeHtml(c.plan||'trial')}<br><span class="hint">${c.plan==='trial' ? (c.trial_ends?'trial to '+fmtDate(c.trial_ends):'') : (c.paid_until?'paid to '+fmtDate(c.paid_until):'')}</span></td>
+          <td style="white-space:nowrap"><button class="btn secondary sm" data-clubbill="${c.id}">Billing</button> ${c.status==='active'
             ? `<button class="btn secondary sm" data-clubset="${c.id}" data-st="suspended">Suspend</button>`
             : `<button class="btn sm" data-clubset="${c.id}" data-st="active">${c.status==='suspended'?'Reactivate':'Approve'}</button>`}</td>
         </tr>`).join('')}</tbody></table></div>`}
     </div></main>`;
   document.getElementById('ownerRefresh').onclick = async () => { await loadOwnerClubs(); render(); };
   document.getElementById('ownerOut').onclick = async () => { ownerClubs = null; await Auth.signOut(); render(); };
+  document.querySelectorAll('[data-clubbill]').forEach(b => b.onclick = () => openClubBillingModal(ownerClubs.find(c => c.id === b.dataset.clubbill)));
   document.querySelectorAll('[data-clubset]').forEach(b => b.onclick = async () => {
     try{ await Store.cloudFetch('rpc/mk_set_club_status', {method:'POST', body: JSON.stringify({p_club:b.dataset.clubset, p_status:b.dataset.st})}); toast('Updated.'); }
     catch(e){ toast(e.message, true); }
     await loadOwnerClubs(); render();
   });
+}
+
+function openClubBillingModal(c){
+  if(!c) return;
+  const back = document.createElement('div'); back.className = 'modal-backdrop';
+  back.innerHTML = `<div class="modal"><h3>Billing: ${escapeHtml(c.name)}</h3>
+    <div class="grid" style="gap:12px;margin-top:10px">
+      <div><label>Plan</label><select id="bPlan">${['trial','monthly','annual','free','cancelled'].map(x=>`<option ${c.plan===x?'selected':''}>${x}</option>`).join('')}</select></div>
+      <div><label>Paid until <span class="hint">leave empty for trial or free</span></label><input type="date" id="bPaid" value="${c.paid_until?String(c.paid_until).slice(0,10):''}"></div>
+      <div><label>Note <span class="hint">e.g. EFT reference</span></label><input type="text" id="bNote" value="${escapeHtml(c.billing_note||'')}"></div>
+    </div>
+    <p id="bErr" style="color:var(--red);font-size:13px;display:none"></p>
+    <div class="btnrow"><button class="btn secondary" id="bCancel">Cancel</button><button class="btn" id="bSave">Save</button></div></div>`;
+  document.body.appendChild(back);
+  back.querySelector('#bCancel').onclick = () => back.remove();
+  back.querySelector('#bSave').onclick = async () => {
+    try{
+      await Store.cloudFetch('rpc/mk_set_club_billing', {method:'POST', body: JSON.stringify({p_club:c.id, p_plan:back.querySelector('#bPlan').value, p_paid_until: back.querySelector('#bPaid').value || null, p_note: back.querySelector('#bNote').value})});
+      back.remove(); toast('Billing saved.'); await loadOwnerClubs(); render();
+    }catch(e){ const el = back.querySelector('#bErr'); el.textContent = e.message; el.style.display = 'block'; }
+  };
 }
 
 function authShellWrap(inner){
@@ -3892,7 +4034,8 @@ function loginScreenHtml(){
       <div class="grid" style="gap:14px">
         <div><label>Email</label><input type="text" id="authEmail" autocomplete="username" placeholder="you@example.com"></div>
         <div><label>Password${up ? ` <span class="hint">at least ${MIN_PASSWORD_LENGTH} characters</span>` : ''}</label><input type="password" id="authPassword" autocomplete="${up?'new-password':'current-password'}"></div>
-        ${up ? `<div><label>Confirm password</label><input type="password" id="authPassword2" autocomplete="new-password"></div>` : ''}
+        ${up ? `<div><label>Confirm password</label><input type="password" id="authPassword2" autocomplete="new-password"></div>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;font-size:13px"><input type="checkbox" id="authAgree" style="margin-top:3px"><span>I have read the <a href="privacy.html" target="_blank" rel="noopener">privacy policy</a> and accept the <a href="terms.html" target="_blank" rel="noopener">terms of use</a>.</span></label>` : ''}
       </div>
       ${authError ? `<p style="color:var(--red);font-size:13px;margin-top:10px">${escapeHtml(authError)}</p>` : ''}
       ${authInfo ? `<p style="color:var(--green);font-size:13px;margin-top:10px">${escapeHtml(authInfo)}</p>` : ''}
@@ -3915,6 +4058,7 @@ function wireLoginScreen(){
       const p2 = document.getElementById('authPassword2').value;
       if(password.length < MIN_PASSWORD_LENGTH){ authError = `Use at least ${MIN_PASSWORD_LENGTH} characters.`; authInfo=''; renderAuthGate(); return; }
       if(password !== p2){ authError = 'The two passwords do not match.'; authInfo=''; renderAuthGate(); return; }
+      if(!document.getElementById('authAgree').checked){ authError = 'Please accept the privacy policy and terms to create an account.'; authInfo=''; renderAuthGate(); return; }
     }
     authBusy = true; authError = ''; authInfo = ''; renderAuthGate();
     try{
@@ -3969,22 +4113,74 @@ function wirePendingScreen(){
    CHANGE MY PASSWORD — available to every signed-in role, self-service only.
    Uses the user's own session (auth.updateUser), never touches other accounts.
    --------------------------------------------------------------------- */
+async function renderMfaBox(box){
+  const c = Auth.client; if(!c || !box) return;
+  box.innerHTML = '<p class="hint">Checking…</p>';
+  let all = [];
+  try{ const { data, error } = await c.auth.mfa.listFactors(); if(error) throw error; all = (data && data.all) || []; }
+  catch(e){ box.innerHTML = `<p class="hint">Two-step login is not available right now. ${escapeHtml(e.message||'')}</p>`; return; }
+  const on = all.find(f => f.factor_type === 'totp' && f.status === 'verified');
+  if(on){
+    box.innerHTML = `<p class="sub" style="margin:4px 0 8px"><span class="pill green">On</span> You will be asked for a code from your authenticator app each time you sign in.</p>
+      <button class="btn danger sm" id="mfaOffBtn">Turn off two-step login</button><span class="hint" id="mfaMsg" style="margin-left:10px"></span>`;
+    box.querySelector('#mfaOffBtn').onclick = async () => {
+      if(!await confirmModal('Turn off two-step login', 'Your account will be protected by your password only. Continue?', 'Turn off', true)) return;
+      const { error } = await c.auth.mfa.unenroll({ factorId: on.id });
+      if(error){ box.querySelector('#mfaMsg').textContent = error.message; return; }
+      toast('Two-step login is off.'); renderMfaBox(box);
+    };
+    return;
+  }
+  box.innerHTML = `<p class="sub" style="margin:4px 0 8px">Add a second step with an authenticator app (Google Authenticator, Microsoft Authenticator, Authy). Recommended for administrators.</p>
+    <button class="btn secondary sm" id="mfaOnBtn">Set up two-step login</button><span class="hint" id="mfaMsg" style="margin-left:10px"></span>`;
+  box.querySelector('#mfaOnBtn').onclick = async () => {
+    const msg = box.querySelector('#mfaMsg');
+    try{
+      for(const f of all){ if(f.status !== 'verified'){ await c.auth.mfa.unenroll({ factorId: f.id }); } }   // clear abandoned set-ups
+      const { data, error } = await c.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Authenticator' });
+      if(error) throw error;
+      box.innerHTML = `<p class="sub" style="margin:4px 0 8px">1. Scan this picture with your authenticator app (or type the key). 2. Type the 6-digit code it shows.</p>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap"><img id="mfaQr" alt="QR code" width="150" height="150" style="background:#fff;border-radius:8px;padding:6px">
+        <div><div class="hint">Key</div><code id="mfaSecret" style="word-break:break-all;font-size:12.5px"></code></div></div>
+        <div class="grid g2" style="margin-top:10px;align-items:end"><div><label>6-digit code</label><input type="text" id="mfaSetupCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>
+        <div><button class="btn sm" id="mfaVerifyBtn">Turn on</button></div></div><p class="hint" id="mfaMsg2" style="color:var(--red)"></p>`;
+      box.querySelector('#mfaQr').setAttribute('src', data.totp.qr_code);
+      box.querySelector('#mfaSecret').textContent = data.totp.secret;
+      box.querySelector('#mfaVerifyBtn').onclick = async () => {
+        const code = box.querySelector('#mfaSetupCode').value.replace(/\s/g,'');
+        const { error: ve } = await c.auth.mfa.challengeAndVerify({ factorId: data.id, code });
+        if(ve){ box.querySelector('#mfaMsg2').textContent = ve.message || 'That code was not accepted.'; return; }
+        toast('Two-step login is on.'); renderMfaBox(box);
+      };
+    }catch(e){ msg.textContent = e.message || 'Could not start set-up.'; }
+  };
+}
+
 function openChangePasswordModal(){
   const back = document.createElement('div');
   back.className = 'modal-backdrop';
-  back.innerHTML = `<div class="modal">
-    <h3>Change my password</h3>
+  back.innerHTML = `<div class="modal" style="max-height:92vh;overflow:auto">
+    <h3>My account</h3>
+    <h4 style="margin:6px 0 0">Change my password</h4>
     <div class="grid" style="gap:12px;margin-top:10px">
       <div><label>New password <span class="hint">at least ${MIN_PASSWORD_LENGTH} characters, use a mix of letters and numbers</span></label><input type="password" id="cpNew" autocomplete="new-password"></div>
       <div><label>Confirm new password</label><input type="password" id="cpConfirm" autocomplete="new-password"></div>
     </div>
     <p id="cpError" style="color:var(--red);font-size:13px;margin-top:8px;display:none"></p>
     <div class="btnrow">
-      <button class="btn secondary" id="cpCancel">Cancel</button>
+      <button class="btn secondary" id="cpCancel">Close</button>
       <button class="btn" id="cpSave">Save new password</button>
     </div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:18px 0 12px">
+    <h4 style="margin:0 0 4px">Two-step login</h4>
+    <div id="mfaBox"></div>
+    ${Auth.isMember() && Auth.profile && Auth.profile.member_full ? `<hr style="border:0;border-top:1px solid var(--line);margin:18px 0 12px">
+    <h4 style="margin:0 0 4px">My data</h4>
+    <p class="hint">Download everything this club has recorded about you.</p>
+    <button class="btn secondary sm" data-dlmember="${escapeHtml(Auth.profile.member_full)}">Download my records (CSV)</button>` : ''}
   </div>`;
   document.body.appendChild(back);
+  renderMfaBox(back.querySelector('#mfaBox'));
   back.querySelector('#cpCancel').onclick = () => back.remove();
   back.onclick = (e) => { if(e.target===back) back.remove(); };
   back.querySelector('#cpSave').onclick = async () => {
