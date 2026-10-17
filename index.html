@@ -327,6 +327,94 @@ function wireSubscriptionCard(){
   const b = document.getElementById('invBtn'); if(!b) return;
   b.onclick = () => openInvoice(Auth.club, document.getElementById('invPlan').value, document.getElementById('invPeriod').value);
 }
+/* ---------------------------------------------------------------------
+   MORE THAN ONE CLUB — one login can belong to several clubs.
+   Auth.memberships lists them; the database keeps one "active" club per login
+   (mk_switch_club), and every security rule follows the active club.
+   --------------------------------------------------------------------- */
+function myClubRows(){
+  return (Auth.memberships || []).map(m => ({m, club: (Auth.clubsById||{})[m.club_id]})).filter(x => x.club);
+}
+function clubRoleLabel(m){ return m.role === 'pending' ? 'waiting for a role' : (m.role_title || (m.role==='viewer' ? 'viewer' : m.role)); }
+async function switchToClub(id){
+  try{ await Store.cloudFetch('rpc/mk_switch_club', {method:'POST', body: JSON.stringify({p_club:id})}); }
+  catch(e){ let m = e.message||''; try{ m = JSON.parse(m.slice(m.indexOf('{'))).message || m; }catch(_){} toast(m || 'Could not switch club.', true); return; }
+  try{ localStorage.removeItem('mk_snapshot'); }catch(_){}
+  location.reload();     // a clean start, so nothing from the previous club can linger on screen
+}
+function addClubSwitcher(){
+  try{
+    const old = document.getElementById('clubSwitch'); if(old) old.remove();
+    if(!Auth.isSignedIn() || Auth.mfaPending || !Auth.profile) return;
+    const rows = myClubRows(); if(rows.length < 2) return;
+    const bar = document.querySelector('.topbar .topbar-spacer'); if(!bar) return;
+    const sel = document.createElement('select');
+    sel.id = 'clubSwitch'; sel.className = 'yearsel'; sel.title = 'Switch club'; sel.style.maxWidth = '200px';
+    sel.innerHTML = rows.map(x => `<option value="${escapeHtml(x.club.id)}" ${x.club.id===Auth.profile.club_id?'selected':''}>${escapeHtml(x.club.name)}${x.club.status==='active'?'':' (waiting)'}</option>`).join('');
+    sel.onchange = () => { if(sel.value !== Auth.profile.club_id) switchToClub(sel.value); };
+    bar.parentNode.insertBefore(sel, bar.nextSibling);
+  }catch(e){ /* the switcher is a convenience; never block the page */ }
+}
+function otherClubsCardHtml(){
+  if(!Auth.isSignedIn() || !Auth.profile) return '';
+  const rows = myClubRows().filter(x => x.club.id !== Auth.profile.club_id && x.club.status === 'active' && x.m.role !== 'pending');
+  if(!rows.length) return '';
+  return `<div class="card" style="margin-top:14px"><h2><span class="dot"></span>Your other clubs</h2>
+    ${rows.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin:8px 0"><span><b>${escapeHtml(x.club.name)}</b> <span class="hint">${escapeHtml(clubRoleLabel(x.m))}</span></span><button class="btn secondary sm" data-switchclub="${escapeHtml(x.club.id)}">Open</button></div>`).join('')}
+  </div>`;
+}
+function myClubsSectionHtml(){
+  const rows = myClubRows();
+  return `<hr style="border:0;border-top:1px solid var(--line);margin:18px 0 12px">
+    <h4 style="margin:0 0 4px">My clubs</h4>
+    ${rows.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin:8px 0;flex-wrap:wrap">
+      <span><b>${escapeHtml(x.club.name)}</b> <span class="hint">${escapeHtml(clubRoleLabel(x.m))}${x.club.status==='active'?'':', waiting for approval'}</span>${x.club.id===(Auth.profile||{}).club_id?' <span class="pill green">Current</span>':''}</span>
+      <span style="white-space:nowrap">${x.club.id===(Auth.profile||{}).club_id?'':`<button class="btn secondary sm" data-switchclub="${escapeHtml(x.club.id)}">Open</button> `}<button class="btn danger sm" data-leaveclub="${escapeHtml(x.club.id)}" data-clubname="${escapeHtml(x.club.name)}">Leave</button></span></div>`).join('')}
+    <button class="btn secondary sm" id="regAnotherBtn">${icon('plus',13)} Register another club</button>`;
+}
+function openRegisterAnotherClub(){
+  const back = document.createElement('div'); back.className = 'modal-backdrop';
+  back.innerHTML = `<div class="modal"><h3>Register another club</h3>
+    <p class="sub">This adds a new club to your login. It is switched on once it has been approved, and you will be its administrator.</p>
+    <div class="grid" style="gap:12px;margin-top:8px">
+      <div><label>Club name</label><input type="text" id="raName"></div>
+      <div><label>Your name</label><input type="text" id="raContact"></div>
+      <div><label>Phone number</label><input type="text" id="raPhone"></div>
+    </div>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;font-size:13px;margin-top:12px"><input type="checkbox" id="raAgree" style="margin-top:3px"><span>On behalf of the club, I accept the <a href="terms.html" target="_blank" rel="noopener">terms of use</a> and the <a href="dpa.html" target="_blank" rel="noopener">data processing agreement</a>.</span></label>
+    <p id="raErr" style="color:var(--red);font-size:13px;display:none"></p>
+    <div class="btnrow"><button class="btn secondary" id="raCancel">Cancel</button><button class="btn" id="raGo">Submit for approval</button></div></div>`;
+  document.body.appendChild(back);
+  const err = (m) => { const e = back.querySelector('#raErr'); e.textContent = m; e.style.display = 'block'; };
+  back.querySelector('#raCancel').onclick = () => back.remove();
+  back.querySelector('#raGo').onclick = async () => {
+    const name = back.querySelector('#raName').value.trim();
+    if(name.length < 2){ err('Enter the club name.'); return; }
+    if(!back.querySelector('#raAgree').checked){ err('Please accept the terms and the data processing agreement.'); return; }
+    try{
+      const cid = await Store.cloudFetch('rpc/mk_register_club', {method:'POST', body: JSON.stringify({p_name:name, p_contact:back.querySelector('#raContact').value.trim(), p_phone:back.querySelector('#raPhone').value.trim()})});
+      try{ await Store.cloudFetch('rpc/mk_accept_terms', {method:'POST', body: JSON.stringify({p_version: LEGAL_VERSION, p_club: cid})}); }catch(_){ /* recorded best-effort */ }
+      back.remove(); document.querySelectorAll('.modal-backdrop').forEach(x => x.remove());
+      await Auth.loadProfile(); render();
+      toast('Submitted. It appears in your club list and switches on once approved.');
+    }catch(e){ let m = e.message||''; try{ m = JSON.parse(m.slice(m.indexOf('{'))).message || m; }catch(_){} err(m || 'Could not register.'); }
+  };
+}
+document.addEventListener('click', async (e) => {
+  const sw = e.target.closest && e.target.closest('[data-switchclub]');
+  if(sw){ switchToClub(sw.dataset.switchclub); return; }
+  const lv = e.target.closest && e.target.closest('[data-leaveclub]');
+  if(lv){
+    if(!await confirmModal('Leave club', `Leave ${lv.dataset.clubname}? You will lose access to it until an admin adds you again.`, 'Leave', true)) return;
+    try{ await Store.cloudFetch('rpc/mk_leave_club', {method:'POST', body: JSON.stringify({p_club: lv.dataset.leaveclub})}); }
+    catch(err){ let m = err.message||''; try{ m = JSON.parse(m.slice(m.indexOf('{'))).message || m; }catch(_){} toast(m || 'Could not leave.', true); return; }
+    try{ localStorage.removeItem('mk_snapshot'); }catch(_){}
+    location.reload();
+    return;
+  }
+  if(e.target.closest && e.target.closest('#regAnotherBtn')) openRegisterAnotherClub();
+});
+
 function addLegalFooter(){
   const app = document.getElementById('app'); if(!app) return;
   const old = document.getElementById('legalFoot'); if(old) old.remove();
@@ -722,7 +810,7 @@ function wireRolesCard(){
         const same = nu && nu.name===old.name && nu.base===old.base && nu.perms.slice().sort().join()===old.perms.slice().sort().join();
         if(same) continue;
         const patch = nu ? {role_title: nu.name, role: nu.base, perms: nu.perms} : {role_title: null};
-        await Store.cloudFetch('mk_profiles?role_title=eq.' + encodeURIComponent(old.name) + '&role=eq.' + encodeURIComponent(old.base), {method:'PATCH', body: JSON.stringify(patch)});
+        await Store.cloudFetch('mk_memberships?club_id=eq.' + encodeURIComponent(Auth.profile.club_id) + '&role_title=eq.' + encodeURIComponent(old.name) + '&role=eq.' + encodeURIComponent(old.base), {method:'PATCH', body: JSON.stringify(patch)});
       }
     }catch(e){ toast('Could not update the people who hold these roles: ' + e.message, true); return; }
     state.settings.rules = Object.assign({}, rules(), {roles: next}); rolesDraft = null;
@@ -917,6 +1005,8 @@ const Auth = {
   },
 
   mfaPending: false,
+  memberships: [],      // every club this login belongs to (one row each, with the role there)
+  clubsById: {},
   async checkMfa(){
     // Signed in with a password, but the account has two-step login on and this session has not passed it yet.
     try{
@@ -930,9 +1020,18 @@ const Auth = {
       const rows = await Store.cloudFetch('mk_profiles?select=*&id=eq.' + this.session.user.id);
       this.profile = (rows && rows[0]) || {role:'pending', email:this.session.user.email};
       this.club = null;
+      // Every club this login belongs to (the table only exists once the multi-club upgrade has been run).
+      this.memberships = []; this.clubsById = {};
+      try{
+        this.memberships = (await Store.cloudFetch('mk_memberships?select=*&user_id=eq.' + this.session.user.id + '&order=created_at')) || [];
+        const ids = this.memberships.map(m => m.club_id);
+        if(ids.length){
+          ((await Store.cloudFetch('mk_clubs?select=*&id=in.(' + ids.join(',') + ')')) || []).forEach(c => { this.clubsById[c.id] = c; });
+        }
+      }catch(_){ this.memberships = []; }
       if(this.profile.club_id){
-        const cl = await Store.cloudFetch('mk_clubs?select=*&id=eq.' + this.profile.club_id);
-        this.club = (cl && cl[0]) || null;
+        if(this.clubsById[this.profile.club_id]) this.club = this.clubsById[this.profile.club_id];
+        else { const cl = await Store.cloudFetch('mk_clubs?select=*&id=eq.' + this.profile.club_id); this.club = (cl && cl[0]) || null; }
       }
       try{ this.owner = (await Store.cloudFetch('rpc/mk_is_platform_admin', {method:'POST', body:'{}'})) === true; }catch(_){ this.owner = false; }
     }catch(e){
@@ -961,7 +1060,7 @@ const Auth = {
   async signOut(){
     const client = this.ensureClient();
     if(client) await client.auth.signOut();
-    this.session = null; this.profile = null; this.club = null; this.owner = false; this.mfaPending = false;
+    this.session = null; this.profile = null; this.club = null; this.owner = false; this.mfaPending = false; this.memberships = []; this.clubsById = {};
     state.profilesCache = []; state.settings = Object.assign({}, SEED.settings);
     try{ localStorage.removeItem('mk_snapshot'); }catch(e){}
     state.execList = null;
@@ -1859,7 +1958,7 @@ function renderAuditorShell(){
   document.getElementById('signOutBtn').onclick = async () => { await Auth.signOut(); render(); };
 }
 
-function render(){ renderCore(); addLegalFooter(); }
+function render(){ renderCore(); addClubSwitcher(); addLegalFooter(); }
 function renderCore(){
   startRuleObserver();
   if(!Store.isCloud()){
@@ -3765,7 +3864,7 @@ function wireSettings(){
     for(const t of ['mk_audits','mk_bank_trips','mk_bank_loans','mk_executives']){
       try{ extra[t] = await Store.cloudFetch(t + '?select=*'); }catch(e){ extra[t] = []; }
     }
-    try{ extra.users = (await Store.cloudFetch('mk_profiles?select=email,role,role_title,member_full,perms')) || []; }catch(e){ extra.users = []; }
+    try{ extra.users = (await Store.cloudFetch('mk_memberships?select=email,role,role_title,member_full,perms&club_id=eq.' + Auth.profile.club_id)) || []; }catch(e){ extra.users = []; }
     const blob = new Blob([JSON.stringify({exportedAt: new Date().toISOString(), club: (Auth.club&&Auth.club.name)||'', members:state.members, datalog:state.datalog, settings:state.settings,
       attMeetings:state.attMeetings, resignations:state.resignations, archives:state.archives, extra}, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
@@ -4144,6 +4243,7 @@ function authShellWrap(inner){
         </div>
       </div>
       ${inner}
+      ${otherClubsCardHtml()}
     </div>
   </div>`;
 }
@@ -4295,6 +4395,7 @@ function openChangePasswordModal(){
       <button class="btn secondary" id="cpCancel">Close</button>
       <button class="btn" id="cpSave">Save new password</button>
     </div>
+    ${myClubsSectionHtml()}
     <hr style="border:0;border-top:1px solid var(--line);margin:18px 0 12px">
     <h4 style="margin:0 0 4px">Two-step login</h4>
     <div id="mfaBox"></div>
@@ -4382,7 +4483,9 @@ function openResetPasswordModal(userId, email){
 
 async function loadProfilesCache(){
   try{
-    state.profilesCache = await Store.cloudFetch('mk_profiles?select=*&order=created_at.desc') || [];
+    // One row per person in THIS club (a person can be in several clubs, with a different role in each).
+    const rows = await Store.cloudFetch('mk_memberships?select=*&club_id=eq.' + Auth.profile.club_id + '&order=created_at.desc') || [];
+    state.profilesCache = rows.map(r => Object.assign({}, r, {id: r.user_id}));
   }catch(e){
     toast('Could not load users: ' + e.message, true);
     state.profilesCache = [];
@@ -4399,7 +4502,7 @@ function viewUsers(){
       <div><label>Invite someone to your club by email</label><input type="text" id="inviteEmail" placeholder="person@example.com"></div>
       <div><button class="btn" id="inviteBtn">Invite</button></div>
     </div>
-    <p class="sub">After you invite an email, that person creates their own login on the sign-in screen with the same email. They then appear below as "pending" and you give them a role.</p>
+    <p class="sub">After you invite an email, that person creates their own login on the sign-in screen with the same email. They then appear below as "pending" and you give them a role. If they already have a login, for example in another club, your club simply appears in their club list.</p>
     ${rows.length===0 ? `<div class="empty">No users found yet, or still loading.</div>` : `
     <div class="tablewrap"><table>
       <thead><tr><th>Email</th><th>Role</th><th>Linked member <span class="hint">(for "member" role)</span></th><th>Extra abilities <span class="hint">(capture and viewer)</span></th><th></th></tr></thead>
@@ -4462,7 +4565,7 @@ function wireUsers(){
       const allowed = rolePermKeys(role);
       const perms = chosen.fixed ? chosen.perms : [...document.querySelectorAll(`[data-perm="${id}"]:checked`)].map(c => c.value).filter(k => allowed.includes(k));
       try{
-        await Store.cloudFetch('mk_profiles?id=eq.' + encodeURIComponent(id), {
+        await Store.cloudFetch('mk_memberships?user_id=eq.' + encodeURIComponent(id) + '&club_id=eq.' + encodeURIComponent(Auth.profile.club_id), {
           method:'PATCH', body: JSON.stringify({role, role_title: chosen.title, member_full: role==='member' ? memberFull : null, perms})
         });
         toast('Saved.');
