@@ -1329,6 +1329,25 @@ function poolPerActiveMember(){
   return n > 0 ? poolTotal / n : 0;
 }
 
+// Everything in the penalty pool comes straight from the DataLog (every row's "penalties paid"), whoever it came from:
+// active members, resigned members (their penalties, 5% share and 20%), and deleted members whose paid penalties were kept.
+function penaltyPoolBreakdown(){
+  const r2 = x => Math.round((Number(x)||0)*100)/100;
+  const active = new Set(activeMembers().map(m => m.full));
+  let fromActive = 0, fromResigned = 0, fromDeleted = 0;
+  state.datalog.forEach(d => {
+    const v = Number(d.pena)||0; if(!v) return;
+    if(active.has(d.name)) fromActive += v;
+    else if(state.members.some(m => m.full === d.name)) fromResigned += v;
+    else fromDeleted += v;
+  });
+  const total = fromActive + fromResigned + fromDeleted;
+  const fund = Number(state.settings.functionFundCost)||0;
+  const net = Math.max(total - fund, 0);
+  const n = activeMembers().length;
+  return {fromActive:r2(fromActive), fromResigned:r2(fromResigned), fromDeleted:r2(fromDeleted), total:r2(total), fund, net:r2(net), perMember: n>0 ? r2(net/n) : 0, n};
+}
+
 // Penalty share per active member (year-end only, gated by settings.applyPenaltyShare === 'YES')
 function penaltySharePerActiveMember(){
   const snap = memberShareSnap(); if(snap) return Number(snap.penaltyPer)||0;
@@ -1554,8 +1573,77 @@ function computeAttendancePenalty(member, status, apology){
    or missed interest, using today's day-of-month for the tier (run it any
    time after the 10th and everyone still missing gets the "missed" tier).
    --------------------------------------------------------------------- */
+// Resignation settlement. Order of deductions from (contributions + B2S):
+//   1. loan principal  2. penalties owed  3. the club's 5% share of the unpaid (accrued) interest
+// The rest is split 80% member / 20% club. Unpaid accrued interest is NOT charged to the member (waived),
+// only the 5% share. Interest already paid also has its 5% moved from the pool to penalties paid. Penalties, the 5% share and the 20% all go in as PENALTIES PAID. Penalties and the 5% are recorded in full even if
+// the member's money does not cover them; the gap shows as "still owed".
+function resignCalc(row, draft){
+  const r2 = x => Math.round((Number(x)||0)*100)/100;
+  draft = draft || {};
+  const loan = draft.overrideOwing!=null ? draft.overrideOwing : row.loanBalance;
+  const penOwed = draft.overridePenalty!=null ? draft.overridePenalty : row.penaltiesOwed;
+  const share = draft.overrideShare!=null ? draft.overrideShare : r2(row.interestAccrued * (Number(state.settings.clubShare)||0));
+  const paidIn = r2(draft.paidIn || 0);                 // cash the member pays in now to cover a shortfall
+  const available = row.totalContributions + row.b2sTotal + paidIn;
+  // Penalties and the 5% share are recorded as penalties paid IN FULL, even when the member's money does not
+  // cover them (any gap shows as "still owed"). Only the 20% depends on what is left.
+  const penPaid = r2(penOwed);
+  const sharePaid = r2(share);
+  const net = r2(Math.max(available - loan - penOwed - share, 0));
+  const forfeiture = r2(net*(1-payoutFrac())), payout = r2(net - forfeiture);
+  const stillOwed = r2(Math.max(loan + penOwed + share - available, 0));
+  // The 5% on interest the member ALREADY paid is sitting in the shared pool. It moves to penalties paid too
+  // (nothing extra is charged to the member), so the whole 5%, paid or unpaid, ends up under penalties paid.
+  const paidShare = r2((Number(row.interestPaid)||0) * (Number(state.settings.clubShare)||0));
+  return {loan, penOwed, share, paidShare, paidIn, available, penPaid, sharePaid, net, forfeiture, payout, stillOwed, loanShort: r2(Math.max(loan-available,0))};
+}
+
+// Deleting members: their paid penalties (and year-end pool charge) are money the club already holds, so those
+// amounts stay in the DataLog (stripped to just that money). Everything else for the member is removed.
+function planMemberDeletion(names){
+  const all = state.datalog.filter(d => names.includes(d.name));
+  const keep = all.filter(d => (Number(d.pena)||0) > 0 || (Number(d.poolChg)||0) !== 0);
+  const kept = keep.map(d => {
+    const stamp = ' [Member deleted ' + todayISO() + ': paid penalty kept]';
+    return Object.assign({}, d, {contr:0, loanRep:0, intPay:0, b2s:0, funeral:0, taken:0, powng:0,
+      pena:(Number(d.pena)||0), poolChg:(Number(d.poolChg)||0), note: String(d.note||'').replace(/ \[Member deleted [^\]]*\]/,'') + stamp});
+  });
+  const keptIds = new Set(kept.map(d=>d.id));
+  return {kept, removedIds: all.filter(d => !keptIds.has(d.id)).map(d=>d.id), keptPen: keep.reduce((a,d)=>a+(Number(d.pena)||0),0)};
+}
+async function applyMemberDeletion(members, plan){
+  const names = members.map(m=>m.full), ids = members.map(m=>m.id);
+  state.members = state.members.filter(m => !ids.includes(m.id));
+  state.datalog = state.datalog.filter(d => !names.includes(d.name)).concat(plan.kept);
+  if(names.includes(state.selectedMemberFull)) state.selectedMemberFull = null;
+  Store.persist();
+  for(const id of ids) await Store.deleteRow('mk_members', id);
+  if(plan.kept.length) await Store.syncTable('mk_datalog', plan.kept, dlToDb);
+  for(const id of plan.removedIds) await Store.deleteRow('mk_datalog', id);
+}
+
+// A month can only be scanned once the late-payment day of the FOLLOWING month has passed
+// (by default the 11th onwards), because until then a payment can still arrive on time or late.
+function sweepOpenDate(month){
+  const mn = MONTH_NUM[month]; if(!mn) return null;
+  const fy = Number(state.settings.yearLabel) || new Date().getFullYear();
+  const sm = startMonth();
+  const cy = (sm > 1 && mn >= sm) ? fy - 1 : fy;
+  const d = new Date(Date.UTC(cy, mn, dueLateDay() + 1));      // month index mn = the next calendar month
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0') + '-' + String(d.getUTCDate()).padStart(2,'0');
+}
+function sweepAllowed(month){
+  const open = sweepOpenDate(month);
+  return !!open && todayISO() >= open;
+}
+function sweepOpenLabel(month){ const open = sweepOpenDate(month); return open ? fmtDate(open) : ''; }
+function clubPct(){ return Math.round((Number(state.settings.clubShare)||0)*100); }        // the club's share of interest, e.g. 5
+function clubKeepPct(){ return 100 - payoutPct(); }                                        // what the club keeps when someone resigns, e.g. 20
+
 function scanPenaltySweep(month){
   if(isNoPenaltyMonth(month) || !feat('penalties')) return []; // penalty-free month, or a club with no penalties
+  if(!sweepAllowed(month)) return []; // too early: see sweepOpenDate
   const today = todayISO();
   const results = [];
   for(const member of activeMembers()){
@@ -2100,7 +2188,7 @@ function executiveMembers(){
   return (state.execList||[]).map(x => ({ e:{role:x.role}, m: state.members.find(m => m.full===x.full) })).filter(x => x.m);
 }
 // The auditor sees executives only; the admin can audit anyone.
-function auditorOnlyExecs(){ return Auth.isAuditor(); }
+function auditorOnlyExecs(){ return false; }   // the auditor can audit every member; the executives are simply listed first
 function isExecName(full){ return executiveMembers().some(x => x.m.full===full); }
 function auditMemberOptions(selected){
   const opt = (m, extra) => `<option value="${escapeHtml(m.full)}" ${m.full===selected?'selected':''}>${escapeHtml(m.full)}${extra||''}${Number(m.fixed)===0?' (B2S)':''}</option>`;
@@ -2248,11 +2336,14 @@ function viewEntry(){
 
   <div class="card">
     <h2><span class="dot"></span>Run Penalty Check</h2>
-    <p class="sub">Checks every active member for the selected month. A month's contribution is on time if paid in that month or by the ${ordDay(dueOnTimeDay())} of the next month, late from the ${ordDay(dueOnTimeDay()+1)} to the ${ordDay(dueLateDay())}, and missed from the ${ordDay(dueLateDay()+1)} — so check September after the ${ordDay(dueOnTimeDay())} of October (late) or after the ${ordDay(dueLateDay())} (missed). Anyone without a payment gets the penalty for today's date; anyone with an unpaid loan and no interest paid also gets the interest penalty once the ${ordDay(dueLateDay())} has passed. Safe to run more than once: anyone already flagged for that month is skipped on a re-run.</p>
+    <p class="sub">Checks every active member for the selected month. A month's contribution is on time if paid in that month or by the ${ordDay(dueOnTimeDay())} of the next month, late from the ${ordDay(dueOnTimeDay()+1)} to the ${ordDay(dueLateDay())}, and missed from the ${ordDay(dueLateDay()+1)} — so a month can only be scanned once the late-payment day of the following month has passed (the button stays locked until then). Anyone without a payment gets the missed-payment penalty; anyone with an unpaid loan and no interest paid also gets the interest penalty once the ${ordDay(dueLateDay())} has passed. Safe to run more than once: anyone already flagged for that month is skipped on a re-run.</p>
     <div class="grid g3">
       <div><label>Month to check</label><select id="sweepMonthSel">${monthOptions(sweepMonth || MON_SHORT[(new Date().getMonth()+11)%12])}</select></div>
-      <div style="align-self:end"><button class="btn secondary" id="scanSweepBtn">${icon('search',15)} Scan for missed payments</button></div>
+      <div style="align-self:end"><button class="btn secondary" id="scanSweepBtn" ${sweepAllowed(sweepMonth || MON_SHORT[(new Date().getMonth()+11)%12]) ? '' : 'disabled title="Too early to scan this month"'}>${icon('search',15)} Scan for missed payments</button></div>
     </div>
+    ${(()=>{ const m = sweepMonth || MON_SHORT[(new Date().getMonth()+11)%12];
+      if(isNoPenaltyMonth(m)) return `<p class="sub" style="margin-top:10px">${m} carries no penalties, so there is nothing to scan.</p>`;
+      return sweepAllowed(m) ? '' : `<p class="sub" style="margin-top:10px;color:var(--red)"><b>Too early to scan ${m}.</b> A month can only be scanned from the 11th of the following month (${escapeHtml(String(sweepOpenLabel(m)))}), after the 10th has passed.</p>`; })()}
     ${sweepResults ? (sweepResults.length===0 ? `<div class="empty" style="margin-top:14px">Nobody is missing a payment for this month.</div>` : `
     <div class="tablewrap" style="margin-top:14px"><table>
       <thead><tr><th>Member</th><th>Reason</th><th class="num">Penalty</th></tr></thead>
@@ -2314,11 +2405,13 @@ function wireEntry(){
   document.getElementById('sweepMonthSel').onchange = (e) => { sweepMonth = e.target.value; sweepResults = null; render(); };
   document.getElementById('scanSweepBtn').onclick = () => {
     sweepMonth = document.getElementById('sweepMonthSel').value;
+    if(!sweepAllowed(sweepMonth)){ toast('Too early: ' + sweepMonth + ' can only be scanned from ' + sweepOpenLabel(sweepMonth) + '.', true); return; }
     sweepResults = scanPenaltySweep(sweepMonth);
     render();
   };
   const applySweepBtn = document.getElementById('applySweepBtn');
   if(applySweepBtn) applySweepBtn.onclick = async () => {
+    if(!sweepAllowed(sweepMonth)){ toast('Too early to apply penalties for ' + sweepMonth + '.', true); return; }
     const ok = await confirmModal('Apply penalty check results',
       `Apply ${sweepResults.length} penalt${sweepResults.length===1?'y':'ies'} for ${sweepMonth}? These will be tagged as auto-applied so you can always identify them later.`,
       'Apply', false);
@@ -2503,6 +2596,8 @@ function viewSheet(){
         </tr>
       </tbody>
     </table></div>
+    ${(()=>{ const pb = penaltyPoolBreakdown(); const other = pb.fromResigned + pb.fromDeleted;
+      return other > 0 ? `<p class="sub" style="margin-top:8px">Penalties paid above are for active members only. A further <b>${fmtR(other)}</b> of penalties paid by resigned or deleted members (from the DataLog) is also part of the penalty pool that gets shared. See Year-End.</p>` : ''; })()}
   </div>`;
 }
 // Adds a second horizontal scrollbar above a wide table, kept in sync with the one below.
@@ -2583,7 +2678,7 @@ function wireMonths(){
    --------------------------------------------------------------------- */
 let membersBulkOpen = false;
 let memberResignOpen = false;
-let memberResignDraft = { overrideOwing: null, overridePenalty: null };
+let memberResignDraft = { overrideOwing: null, overridePenalty: null, overrideShare: null, paidIn: 0 };
 let memberDowngradeOpen = false;
 let memberDowngradeFixed = null;
 
@@ -2636,7 +2731,7 @@ function viewMembers(){
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <h2><span class="dot"></span>Members ${q?`— matching "${escapeHtml(q)}"`:''} <span style="color:var(--muted);font-weight:400">(${members.length})</span></h2>
-      <label style="display:flex;align-items:center;gap:8px;font-weight:400;font-size:13px"><input type="checkbox" id="showResignedToggle" ${showResignedMembers?'checked':''}> Show resigned members</label>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:400;font-size:13px"><input type="checkbox" id="showResignedToggle" ${showResignedMembers?'checked':''}> Show inactive (resigned) members</label>
     </div>
     <div class="tablewrap"><table>
       <thead><tr><th>#</th><th>Surname</th><th>First name</th><th class="num">Fixed Contr</th><th>Type</th><th></th></tr></thead>
@@ -2644,7 +2739,7 @@ function viewMembers(){
         ${members.map((m,i) => `<tr style="cursor:pointer;${state.selectedMemberFull===m.full?'background:var(--panel-2)':''}${m.resigned?';opacity:.55':''}" data-select="${escapeHtml(m.full)}">
           <td>${i+1}</td><td>${escapeHtml(m.surname)}</td><td>${escapeHtml(m.name)}</td>
           <td class="num">${fmtR(m.fixed)}</td>
-          <td>${m.resigned ? '<span class="pill red">Resigned</span>' : (Number(m.fixed)===0 ? '<span class="pill orange">B2S-only</span>' : '<span class="pill green">Active</span>')}</td>
+          <td>${m.resigned ? '<span class="pill red">Inactive</span>' : (Number(m.fixed)===0 ? '<span class="pill orange">B2S-only</span>' : '<span class="pill green">Active</span>')}</td>
           <td>${icon('chev',14)}</td>
         </tr>`).join('') || `<tr><td colspan="6"><div class="empty">No members found.</div></td></tr>`}
       </tbody>
@@ -2684,14 +2779,21 @@ function viewResignationLog(){
   return `
   <div class="card">
     <h2><span class="dot"></span>Resignation settlement log</h2>
+    <p class="sub">Each resignation's penalties, ${clubPct()}% share and ${clubKeepPct()}% forfeiture are recorded as penalties paid in the DataLog. They are listed again under Penalties, "Penalties paid from resignations".</p>
     ${log.length===0 ? `<div class="empty">No resignations recorded yet.</div>` : `
     <div class="tablewrap"><table>
-      <thead><tr><th>Date</th><th>Member</th><th class="num">Payout</th><th class="num">Forfeiture</th><th class="num">Still Owed</th></tr></thead>
-      <tbody>${log.map(r => `<tr>
+      <thead><tr><th>Date</th><th>Member</th><th class="num">Penalties</th><th class="num">${clubPct()}% share</th><th class="num">${clubKeepPct()}% forfeiture</th><th class="num">Total to penalties paid</th><th class="num">Payout</th><th class="num">Still Owed</th></tr></thead>
+      <tbody>${log.map(r => {
+        const pen = r.penaltiesRecorded != null ? r.penaltiesRecorded : (Number(r.penaltiesOwed)||0);
+        const sh = (Number(r.interestShareRecorded)||0) + (Number(r.paidInterestShareMoved)||0);
+        const fo = Number(r.forfeiture)||0;
+        return `<tr>
         <td>${fmtDate(r.date)}</td><td>${escapeHtml(r.name)}</td>
-        <td class="num">${fmtR(r.payout)}</td><td class="num">${fmtR(r.forfeiture)}</td>
+        <td class="num">${pen?fmtR(pen):'—'}</td><td class="num">${sh?fmtR(sh):'—'}</td><td class="num">${fo?fmtR(fo):'—'}</td>
+        <td class="num" style="font-weight:700">${fmtR(pen+sh+fo)}</td>
+        <td class="num">${fmtR(r.payout)}</td>
         <td class="num">${r.stillOwed?fmtR(r.stillOwed):'—'}</td>
-      </tr>`).join('')}</tbody>
+      </tr>`; }).join('')}</tbody>
     </table></div>`}
   </div>`;
 }
@@ -2706,30 +2808,33 @@ function memberDetailHtml(member, opts){
   let resignBlock = '';
   if(!opts.readonly && can('members')){
     if(memberResignOpen){
-      const totalOwing = memberResignDraft.overrideOwing!==null ? memberResignDraft.overrideOwing : row.totalOwing;
-      const penaltiesOwed = memberResignDraft.overridePenalty!==null ? memberResignDraft.overridePenalty : row.penaltiesOwed;
-      const totalAvailable = row.totalContributions + row.b2sTotal;
-      const net = totalAvailable - totalOwing - penaltiesOwed;
-      const forfeiture = net > 0 ? net*(1-payoutFrac()) : 0;
-      const payout = net > 0 ? net*payoutFrac() : 0;
-      const stillOwed = net < 0 ? -net : 0;
+      const rc = resignCalc(row, memberResignDraft);
       resignBlock = `
       <div style="margin-top:18px;padding-top:18px;border-top:1px solid var(--line)">
         <h2 style="margin-bottom:4px"><span class="dot"></span>Resignation payout calculator</h2>
-        <p class="sub">Payout = ${payoutPct()}% of (contributions + B2S − loan/interest owing − penalties owed). The club retains ${100-payoutPct()}%.</p>
+        <p class="sub">From contributions + B2S we take the loan, then penalties owed, then the club's ${clubPct()}% share of the unpaid interest (the rest of the unpaid interest is waived). The ${clubPct()}% on interest they already paid is moved from the pool to penalties paid too, at no extra cost to them. The club keeps ${clubKeepPct()}% of what is left and the member gets ${payoutPct()}%. Penalties, the ${clubPct()}% share and the ${clubKeepPct()}% are all recorded as <b>penalties paid</b>, The penalties and the ${clubPct()}% are recorded in full even if the member's money does not cover them, and the gap is shown as "still owed" so it can be followed up.</p>
         <div class="grid g3">
-          <div><label>Total owing (loan + interest) <span class="hint">auto-filled, editable</span></label><input type="number" id="rzOwing" value="${totalOwing.toFixed(2)}"></div>
-          <div><label>Penalties owed <span class="hint">auto-filled, editable</span></label><input type="number" id="rzPenalty" value="${penaltiesOwed.toFixed(2)}"></div>
-          <div><label>Total available (contributions + B2S)</label><input type="number" value="${totalAvailable.toFixed(2)}" disabled></div>
+          <div><label>Loan owing (principal) <span class="hint">auto-filled, editable</span></label><input type="number" id="rzOwing" value="${rc.loan.toFixed(2)}"></div>
+          <div><label>Penalties owed <span class="hint">auto-filled, editable</span></label><input type="number" id="rzPenalty" value="${rc.penOwed.toFixed(2)}"></div>
+          <div><label>${clubPct()}% share of unpaid interest <span class="hint">interest ${fmtR(row.interestAccrued)} unpaid, auto-filled, editable</span></label><input type="number" id="rzShare" value="${rc.share.toFixed(2)}"></div>
         </div>
+        <div class="grid g3" style="margin-top:10px">
+          <div><label>Total available (contributions + B2S + paid in)</label><input type="number" value="${rc.available.toFixed(2)}" disabled></div>
+          <div><label>Money paid in by the member now <span class="hint">to cover any shortfall</span></label><input type="number" id="rzPaidIn" value="${rc.paidIn.toFixed(2)}" min="0"></div>
+        </div>
+        ${rc.stillOwed > 0.005 ? `<p style="color:var(--red);font-size:13px;margin-top:10px"><b>The member must pay in ${fmtR(rc.stillOwed)}</b> to cover the loan, penalties and ${clubPct()}% share before the resignation can be recorded. Enter the amount they paid in above.</p>` : ''}
         <div class="grid g4" style="margin-top:14px">
-          <div class="kpi"><div class="v">${fmtR(net)}</div><div class="l">Net after debts</div></div>
-          <div class="kpi"><div class="v">${fmtR(forfeiture)}</div><div class="l">20% forfeiture (club)</div></div>
-          <div class="kpi"><div class="v" style="color:var(--green)">${fmtR(payout)}</div><div class="l">${payoutPct()}% payout to member</div></div>
-          <div class="kpi"><div class="v" style="color:${stillOwed?'var(--red)':'inherit'}">${fmtR(stillOwed)}</div><div class="l">Still owed by member</div></div>
+          <div class="kpi"><div class="v">${fmtR(rc.net)}</div><div class="l">Left after loan, penalties and ${clubPct()}% share</div></div>
+          <div class="kpi"><div class="v">${fmtR(rc.forfeiture)}</div><div class="l">${clubKeepPct()}% forfeiture (club)</div></div>
+          <div class="kpi"><div class="v" style="color:var(--green)">${fmtR(rc.payout)}</div><div class="l">${payoutPct()}% payout to member</div></div>
+          <div class="kpi"><div class="v" style="color:${rc.stillOwed?'var(--red)':'inherit'}">${fmtR(rc.stillOwed)}</div><div class="l">Still owed by member</div></div>
+        </div>
+        <div class="grid g3" style="margin-top:10px">
+          <div class="kpi"><div class="v">${fmtR(rc.penPaid + rc.sharePaid + rc.paidShare + rc.forfeiture)}</div><div class="l">Goes into penalties paid now</div></div>
+          <div class="kpi"><div class="v">${fmtR(rc.paidShare)}</div><div class="l">${clubPct()}% of interest already paid (moved from the pool)</div></div>
         </div>
         <div class="btnrow" style="margin-top:14px">
-          <button class="btn" id="recordResignBtn">${icon('logout',15)} Record settlement</button>
+          <button class="btn" id="recordResignBtn" ${rc.stillOwed > 0.005 ? 'disabled title="The member must pay in the shortfall first"' : ''}>${icon('logout',15)} Record settlement</button>
           <button class="btn secondary" id="cancelResignBtn">Cancel</button>
         </div>
       </div>`;
@@ -2769,15 +2874,15 @@ function memberDetailHtml(member, opts){
   return `
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
-      <h2><span class="dot"></span>${escapeHtml(member.full)} ${Number(member.fixed)===0?'<span class="pill orange">B2S-only</span>':''}${member.resigned?` <span class="pill red">Resigned ${fmtDate(member.resignedDate)}</span>`:''}</h2>
+      <h2><span class="dot"></span>${escapeHtml(member.full)} ${Number(member.fixed)===0?'<span class="pill orange">B2S-only</span>':''}${member.resigned?` <span class="pill red">Inactive since ${fmtDate(member.resignedDate)}</span>`:''}</h2>
       ${(!opts.readonly && can('members')) ? `<div class="btnrow no-print">
         <button class="btn secondary sm" id="editMemberBtn">${icon('edit',13)} Edit</button>
         ${Number(member.fixed) > 0 && !member.resigned ? `<button class="btn secondary sm" id="downgradeMemberBtn">${icon('trend',13)} Downgrade</button>` : ''}
-        ${!member.resigned ? `<button class="btn secondary sm" id="resignMemberBtn">${icon('logout',13)} Process resignation</button>` : ''}
+        ${!member.resigned ? `<button class="btn secondary sm" id="resignMemberBtn">${icon('logout',13)} Process resignation</button>` : `<button class="btn sm" id="reactivateMemberBtn">${icon('user',13)} Mark as active again</button>`}
         <button class="btn danger sm" id="deleteMemberBtn">${icon('trash',13)} Delete</button>
       </div>` : ''}
     </div>
-    ${member.resigned ? `<p class="sub" style="color:var(--red)">This member has resigned and no longer appears in Main Sheet, Yearly Contributions, or Monthly Report — their history below is kept for reference.</p>` : ''}
+    ${member.resigned ? `<p class="sub" style="color:var(--red)">This member is inactive (resigned). They do not appear in the Main Sheet, Yearly Contributions, Monthly Report or Attendance, and their history below is kept for reference. When they come back, use "Mark as active again".</p>` : ''}
     <div class="grid g4" style="margin:14px 0">
       <div class="kpi"><div class="v">${fmtR(row.totalContributions)}</div><div class="l">Total contributions</div></div>
       <div class="kpi"><div class="v">${fmtR(row.totalOwing)}</div><div class="l">Total owing (loan + interest)</div></div>
@@ -2885,7 +2990,7 @@ function wireMembers(){
     row.onclick = () => {
       const full = row.dataset.select;
       state.selectedMemberFull = state.selectedMemberFull===full ? null : full;
-      memberResignOpen = false; memberResignDraft = {overrideOwing:null, overridePenalty:null};
+      memberResignOpen = false; memberResignDraft = {overrideOwing:null, overridePenalty:null, overrideShare:null, paidIn:0};
       render();
     };
   });
@@ -2936,16 +3041,12 @@ function wireMembers(){
     if(bulkDelBtn) bulkDelBtn.onclick = async () => {
       const ids = Array.from(document.querySelectorAll('[data-bulkdel]:checked')).map(el => el.dataset.bulkdel);
       if(ids.length===0){ toast('Select at least one member.', true); return; }
-      const names = state.members.filter(m => ids.includes(m.id)).map(m=>m.full);
-      const ok = await confirmModal('Bulk delete', `Delete ${ids.length} member${ids.length===1?'':'s'} and all their DataLog history? This can't be undone.`, 'Delete all', true);
+      const mems = state.members.filter(m => ids.includes(m.id));
+      const plan = planMemberDeletion(mems.map(m=>m.full));
+      const ok = await confirmModal('Bulk delete', `Delete ${ids.length} member${ids.length===1?'':'s'} and their DataLog history? ` +
+        (plan.kept.length ? `Their <b>${fmtR(plan.keptPen)}</b> of already-paid penalties stays in the DataLog. ` : '') + `This can't be undone.`, 'Delete all', true);
       if(!ok) return;
-      const removedDataIds = state.datalog.filter(d => names.includes(d.name)).map(d=>d.id);
-      state.members = state.members.filter(m => !ids.includes(m.id));
-      state.datalog = state.datalog.filter(d => !names.includes(d.name));
-      if(names.includes(state.selectedMemberFull)) state.selectedMemberFull = null;
-      Store.persist();
-      for(const id of ids) await Store.deleteRow('mk_members', id);
-      for(const id of removedDataIds) await Store.deleteRow('mk_datalog', id);
+      await applyMemberDeletion(mems, plan);
       toast(`${ids.length} member${ids.length===1?'':'s'} deleted.`);
       render();
     };
@@ -2955,21 +3056,47 @@ function wireMembers(){
   if(selected && can('members')){
     document.getElementById('editMemberBtn').onclick = () => openRenameModal(selected.id);
     document.getElementById('deleteMemberBtn').onclick = async () => {
-      const ok = await confirmModal('Delete member', `Delete <b>${escapeHtml(selected.full)}</b> and remove all their history rows from DataLog? This can't be undone.`, 'Delete', true);
+      const plan = planMemberDeletion([selected.full]);
+      const ok = await confirmModal('Delete member', `Delete <b>${escapeHtml(selected.full)}</b> and remove their history rows from DataLog? ` +
+        (plan.kept.length ? `The <b>${fmtR(plan.keptPen)}</b> of penalties they already paid stays in the DataLog (penalties paid), so the club's penalty totals and year-end shares do not change. ` : `They have no paid penalties on record. `) +
+        `This can't be undone.`, 'Delete', true);
       if(!ok) return;
-      state.members = state.members.filter(m => m.id!==selected.id);
-      const removedIds = state.datalog.filter(d => d.name===selected.full).map(d=>d.id);
-      state.datalog = state.datalog.filter(d => d.name!==selected.full);
-      state.selectedMemberFull = null;
-      Store.persist();
-      await Store.deleteRow('mk_members', selected.id);
-      for(const id of removedIds) await Store.deleteRow('mk_datalog', id);
-      toast(selected.full + ' deleted.');
+      await applyMemberDeletion([selected], plan);
+      toast(selected.full + ' deleted.' + (plan.keptPen ? ' ' + fmtR(plan.keptPen) + ' of paid penalties kept.' : ''));
       render();
+    };
+    const reactBtn = document.getElementById('reactivateMemberBtn');
+    if(reactBtn) reactBtn.onclick = () => {
+      const oldRows = state.datalog.filter(d => d.name===selected.full && (Number(d.contr)||0) > 0);
+      const back = document.createElement('div');
+      back.className = 'modal-backdrop';
+      back.innerHTML = `<div class="modal">
+        <h3>Mark ${escapeHtml(selected.full)} as active again</h3>
+        <p>They will appear again in the Main Sheet, Monthly Report, Yearly Contributions and Attendance, and can be captured and penalised like any other member.</p>
+        ${oldRows.length ? `<p style="color:var(--red)"><b>Heads up:</b> this member still has ${fmtR(oldRows.reduce((a,d)=>a+(Number(d.contr)||0),0))} of contributions in the current year's DataLog from before they left, and their payout was settled when they resigned. Those amounts would count for them again. It is best to do this after the New Year reset, when last year's rows have been archived.</p>` : ''}
+        <div style="margin-top:10px"><label>Monthly contribution (R) <span class="hint">0 = B2S-only</span></label><input type="number" id="raFixed" value="${Number(selected.fixed)||0}" min="0" step="50"></div>
+        <div class="btnrow"><button class="btn secondary" id="raCancel">Cancel</button><button class="btn" id="raOk">Mark as active</button></div>
+      </div>`;
+      document.body.appendChild(back);
+      back.querySelector('#raCancel').onclick = () => back.remove();
+      back.onclick = (e) => { if(e.target===back) back.remove(); };
+      back.querySelector('#raOk').onclick = async () => {
+        selected.fixed = Number(back.querySelector('#raFixed').value) || 0;
+        selected.resigned = false;
+        selected.resignedDate = null;
+        const last = state.resignations.filter(r => r.name===selected.full).slice(-1)[0];
+        if(last){ last.returnedDate = todayISO(); }
+        Store.persist();
+        if(last) await Store.syncTable('mk_resignations', [last], r => ({id:r.id, date:r.date, data: JSON.stringify(r)}));
+        await Store.syncTable('mk_members', [selected], m => ({id:m.id, surname:m.surname, name:m.name, full_name:m.full, fixed:m.fixed, resigned:!!m.resigned, resigned_date:m.resignedDate||null}));
+        back.remove();
+        toast(selected.full + ' is active again.');
+        render();
+      };
     };
     const resignBtn = document.getElementById('resignMemberBtn');
     if(resignBtn) resignBtn.onclick = () => {
-      memberResignOpen = true; memberResignDraft = {overrideOwing:null, overridePenalty:null}; render();
+      memberResignOpen = true; memberResignDraft = {overrideOwing:null, overridePenalty:null, overrideShare:null, paidIn:0}; render();
     };
     const downgradeBtn = document.getElementById('downgradeMemberBtn');
     if(downgradeBtn) downgradeBtn.onclick = () => { memberDowngradeOpen = true; memberDowngradeFixed = null; render(); };
@@ -3038,43 +3165,39 @@ function wireMembers(){
     if(cancelResign) cancelResign.onclick = () => { memberResignOpen = false; render(); };
     const owingInput = document.getElementById('rzOwing');
     if(owingInput) owingInput.onchange = e => { memberResignDraft.overrideOwing = Number(e.target.value)||0; render(); };
+    const paidInInput = document.getElementById('rzPaidIn');
+    if(paidInInput) paidInInput.onchange = e => { memberResignDraft.paidIn = Math.max(Number(e.target.value)||0,0); render(); };
+    const shareInput = document.getElementById('rzShare');
+    if(shareInput) shareInput.onchange = e => { memberResignDraft.overrideShare = Number(e.target.value)||0; render(); };
     const penInput = document.getElementById('rzPenalty');
     if(penInput) penInput.onchange = e => { memberResignDraft.overridePenalty = Number(e.target.value)||0; render(); };
     const recordBtn = document.getElementById('recordResignBtn');
     if(recordBtn) recordBtn.onclick = async () => {
       const row = computeMemberRow(selected);
-      const totalOwing = memberResignDraft.overrideOwing!==null ? memberResignDraft.overrideOwing : row.totalOwing;
-      const penaltiesOwed = memberResignDraft.overridePenalty!==null ? memberResignDraft.overridePenalty : row.penaltiesOwed;
-      const totalAvailable = row.totalContributions + row.b2sTotal;
-      const net = totalAvailable - totalOwing - penaltiesOwed;
-      const forfeiture = net > 0 ? net*(1-payoutFrac()) : 0;
-      const payout = net > 0 ? net*payoutFrac() : 0;
-      const stillOwed = net < 0 ? -net : 0;
+      const rc = resignCalc(row, memberResignDraft);
+      const {loan, penOwed, share, available, penPaid, sharePaid, net, forfeiture, payout, stillOwed} = rc;
+      if(stillOwed > 0.005){ toast('The member must pay in ' + fmtR(stillOwed) + ' before the resignation can be recorded.', true); return; }
+      const intoPen = penPaid + sharePaid + rc.paidShare + forfeiture;
 
       const ok = await confirmModal('Record resignation settlement',
-        `This will log the resignation of <b>${escapeHtml(selected.full)}</b>, clear their loan/interest and penalty balances in DataLog, and record their ${fmtR(forfeiture)} forfeiture as a penalty so it flows into the shared pool (payout of ${fmtR(payout)} is not itself deposited — pay it out separately). Continue?`,
+        `This logs the resignation of <b>${escapeHtml(selected.full)}</b> and clears their loan. Unpaid interest is waived. <b>${fmtR(intoPen)}</b> goes into penalties paid (penalties ${fmtR(penPaid)}, ${clubPct()}% share ${fmtR(sharePaid + rc.paidShare)}, ${clubKeepPct()}% forfeiture ${fmtR(forfeiture)}). Payout of ${fmtR(payout)} is not deposited, so pay it out separately.` +
+        (rc.paidIn>0 ? ` The ${fmtR(rc.paidIn)} they paid in is recorded as a payment.` : '') + ` Continue?`,
         'Record settlement', false);
       if(!ok) return;
 
+      const mon = MONTHS[Number(state.settings.monthsElapsed)-1]||MONTHS[0];
+      const mk = (o, note) => Object.assign({id: uid('d'), date: todayISO()+'T00:00:00', name: selected.full, month: mon,
+        year: state.settings.yearLabel, contr:0, loanRep:0, intPay:0, pena:0, b2s:0, funeral:0, taken:0, powng:0, source:'resignation', note}, o);
       const clearingRows = [];
-      if(row.loanBalance > 0 || row.interestAccrued > 0){
-        clearingRows.push({id: uid('d'), date: todayISO()+'T00:00:00', name: selected.full, month: MONTHS[Number(state.settings.monthsElapsed)-1]||MONTHS[0],
-          year: state.settings.yearLabel, contr:0, loanRep: row.loanBalance, intPay: row.interestAccrued, pena:0, b2s:0, funeral:0, taken:0, powng:0, source:'resignation'});
-      }
-      if(penaltiesOwed > 0){
-        clearingRows.push({id: uid('d'), date: todayISO()+'T00:00:00', name: selected.full, month: MONTHS[Number(state.settings.monthsElapsed)-1]||MONTHS[0],
-          year: state.settings.yearLabel, contr:0, loanRep:0, intPay:0, pena: penaltiesOwed, b2s:0, funeral:0, taken:0, powng:0, source:'resignation'});
-      }
-      if(forfeiture > 0){
-        // The 20% forfeiture is recorded as a penalty paid, so it flows into the
-        // shared penalty pool (Settings > "Apply penalty share at year-end?") just
-        // like any other penalty payment would.
-        clearingRows.push({id: uid('d'), date: todayISO()+'T00:00:00', name: selected.full, month: MONTHS[Number(state.settings.monthsElapsed)-1]||MONTHS[0],
-          year: state.settings.yearLabel, contr:0, loanRep:0, intPay:0, pena: forfeiture, b2s:0, funeral:0, taken:0, powng:0, source:'resignation'});
-      }
+      if(rc.paidIn > 0) clearingRows.push(mk({contr: rc.paidIn}, 'Resignation: money paid in by the member to cover the loan, penalties and ' + clubPct() + '% share'));
+      if(row.loanBalance > 0) clearingRows.push(mk({loanRep: row.loanBalance}, 'Resignation: loan cleared against contributions (unpaid interest waived)'));
+      if(penPaid > 0)   clearingRows.push(mk({pena: penPaid}, 'Resignation: penalties owed, taken from contributions'));
+      if(sharePaid > 0) clearingRows.push(mk({pena: sharePaid}, 'Resignation: ' + clubPct() + '% club share of unpaid interest, recorded as penalty paid'));
+      if(rc.paidShare > 0) clearingRows.push(mk({pena: rc.paidShare, poolChg: -rc.paidShare}, 'Resignation: ' + clubPct() + '% of interest already paid, moved from the pool to penalties paid'));
+      if(forfeiture > 0) clearingRows.push(mk({pena: forfeiture}, 'Resignation: ' + clubKeepPct() + '% forfeiture, recorded as penalty paid'));
       state.datalog.push(...clearingRows);
 
-      const entry = {id: uid('rz'), date: todayISO(), name: selected.full, totalOwing, penaltiesOwed, totalAvailable,
+      const entry = {id: uid('rz'), date: todayISO(), name: selected.full, totalOwing: loan, penaltiesOwed: penOwed, interestShare: share, interestShareRecorded: sharePaid, paidInterestShareMoved: rc.paidShare, penaltiesRecorded: penPaid, totalAvailable: available,
         net, forfeiture, payout, stillOwed, notes:'Settlement recorded'};
       state.resignations.push(entry);
       selected.resigned = true;
@@ -3480,6 +3603,17 @@ function viewNewYear(){
       <div><label>Apply penalty share this year?</label>
         <select id="yeApplyPenaltyShare"><option value="YES" ${s.applyPenaltyShare==='YES'?'selected':''}>Yes</option><option value="NO" ${s.applyPenaltyShare!=='YES'?'selected':''}>No</option></select></div>
     </div>
+    ${(()=>{ const pb = penaltyPoolBreakdown(); return `
+    <div class="tablewrap" style="margin-top:14px"><table>
+      <thead><tr><th>Penalty pool, drawn from the DataLog (penalties paid)</th><th class="num">Amount</th></tr></thead>
+      <tbody>
+        <tr><td>From active members</td><td class="num">${fmtR(pb.fromActive)}</td></tr>
+        <tr><td>From resigned members (penalties, ${clubPct()}% share, ${clubKeepPct()}%)</td><td class="num">${fmtR(pb.fromResigned)}</td></tr>
+        <tr><td>Kept from deleted members</td><td class="num">${fmtR(pb.fromDeleted)}</td></tr>
+        <tr style="font-weight:700"><td>Total penalties paid</td><td class="num">${fmtR(pb.total)}</td></tr>
+        <tr><td>Less function fund cost</td><td class="num">${pb.fund?'− '+fmtR(pb.fund):fmtR(0)}</td></tr>
+        <tr style="font-weight:700"><td>Shared between ${pb.n} active member${pb.n===1?'':'s'}</td><td class="num">${fmtR(pb.net)} (${fmtR(pb.perMember)} each)</td></tr>
+      </tbody></table></div>`; })()}
     <div class="grid g3" style="margin-top:14px">
       <div class="kpi"><div class="v">${fmtR(bankInterestPerActiveMember())}</div><div class="l">Bank interest, per active member</div></div>
       <div class="kpi"><div class="v">${fmtR(s.applyPenaltyShare==='YES' ? penaltySharePerActiveMember() : 0)}</div><div class="l">Penalty pool, per active member${s.applyPenaltyShare==='YES'?'':' (currently off)'}</div></div>
@@ -4668,7 +4802,7 @@ function penaltySummaryHtml(member){
 
 function viewPenalties(opts){
   opts = opts || {};
-  const audOnly = Auth.isAuditor();
+  const audOnly = auditorOnlyExecs();
   const execSet = new Set(executiveMembers().map(x => x.m.full));
   const keep = i => !audOnly || execSet.has(i.name);
   const items = penaltyItems({member: penFilterMember, month: penFilterMonth}).filter(keep);
@@ -4738,7 +4872,23 @@ function viewPenalties(opts){
         ${canFix?`<td class="no-print"><button class="btn secondary sm" data-fixpen="${escapeHtml(i.id)}">${icon('edit',12)} Fix</button></td>`:''}
       </tr>`).join('')}</tbody>
     </table></div>`}
-  </div>`;
+  </div>
+
+  ${(() => {
+    const rz = state.datalog.filter(d => (Number(d.pena)||0) > 0 && (d.source==='resignation' || String(d.note||'').includes('Member deleted')))
+      .slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    const tot = rz.reduce((a,d)=>a+(Number(d.pena)||0),0);
+    return `<div class="card">
+    <h2><span class="dot"></span>Penalties paid from resignations (and deleted members)</h2>
+    <p class="sub">Money taken when a member resigns (their penalties, the ${clubPct()}% share of interest and the ${clubKeepPct()}% forfeiture) and penalties kept from deleted members. All of it sits under <b>penalties paid</b> in the DataLog, so it is part of the year-end penalty share.</p>
+    ${rz.length===0 ? `<div class="empty">No resignation penalties recorded yet.</div>` : `
+    <div class="tablewrap"><table>
+      <thead><tr><th>Date</th><th>Member</th><th>What it is</th><th class="num">Penalties paid</th></tr></thead>
+      <tbody>${rz.map(d => `<tr><td>${fmtDate(d.date)}</td><td>${escapeHtml(d.name)}</td><td>${escapeHtml(d.note||'')}</td><td class="num" style="font-weight:700">${fmtR(d.pena)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="3" style="font-weight:700">Total</td><td class="num" style="font-weight:700">${fmtR(tot)}</td></tr></tfoot>
+    </table></div>`}
+  </div>`; })()}
+  `;
 }
 
 function wirePenalties(){
@@ -5001,9 +5151,18 @@ let auditMonthLabel = null;
 let auditDraft = null; // {answers:[{key,point,answer,comment,auto}], signedOffBy, id}
 let auditHistoryCache = null;
 
+function parseAuditLabel(label){
+  const m = /^Q([1-4])\s+(\d{4})$/.exec(String(label||'').trim());
+  if(m){ const q = auditQuarters()[Number(m[1])-1]; return {quarter:true, qid:q.id, months:q.months, year:Number(m[2]), text:q.label}; }
+  const parts = String(label||'').split(' ');
+  return {quarter:false, qid:null, months:[parts[0]], year:Number(parts[1]), text:String(label||'')};
+}
+function quarterAuditLabel(qid){ return 'Q' + qid.slice(1) + ' ' + (state.settings.yearLabel||''); }
+// The audit period offered by default: the quarter we are currently in.
 function currentAuditMonthLabel(){
   const idx = Math.max((Number(state.settings.monthsElapsed)||1)-1, 0);
-  return MONTHS[idx] + ' ' + (state.settings.yearLabel||'');
+  const q = auditQuarters().find(x => x.months.includes(MONTHS[idx])) || auditQuarters()[0];
+  return quarterAuditLabel(q.id);
 }
 
 async function loadAuditHistory(){
@@ -5022,34 +5181,42 @@ function missedTierAmount(member){
 // Fills the checklist from the member's own records. Every answer is only a
 // suggestion — the auditor can change any answer, comment or point.
 function prefillAudit(member, monthLabel, points){
-  const monthName = (monthLabel||'').split(' ')[0];
-  const idx = fiscalIndex(monthName);
-  const snap = memberMonthSnapshot(member.full, monthLabel);
+  // The audit covers a whole period: a quarter (Q1 Dec–Feb, Q2 Mar–May, Q3 Jun–Aug, Q4 Sep–Nov) or, for older
+  // audits saved per month, a single month. Everything below looks at every month of that period.
+  const per = parseAuditLabel(monthLabel);
+  const yr = per.year;
+  const elapsed = Number(state.settings.monthsElapsed)||0;
+  const snap = memberMonthSnapshot(member.full, monthLabel);           // whole period
+  const snapOf = (mn) => memberMonthSnapshot(member.full, mn + ' ' + yr);
   const row = computeMemberRow(member);
   const fixed = Number(member.fixed)||0;
-  const elapsed = Number(state.settings.monthsElapsed)||0;
-  const future = idx > elapsed;
-  const cumContr = row.entries.filter(e => fiscalIndex(e.month) <= idx).reduce((s,e)=>s+(Number(e.contr)||0),0);
   const R = fmtR;
   const A = (answer, comment) => ({answer, comment, auto:true});
+  const livePerMonths = per.months.filter(mn => fiscalIndex(mn) <= elapsed);      // months of the period that have happened
+  const lastIdx = livePerMonths.length ? Math.max(...livePerMonths.map(fiscalIndex)) : 0;
+  const future = livePerMonths.length === 0;
+  const cumTo = (idx) => row.entries.filter(e => fiscalIndex(e.month) <= idx).reduce((x,e)=>x+(Number(e.contr)||0),0);
+  const firstLoanIdx = (() => { const t = row.entries.filter(e => Number(e.taken)>0).map(e => fiscalIndex(e.month)); return t.length ? Math.min(...t) : null; })();
+  const listM = arr => arr.join(', ');
   const calc = {
     contr(){
       if(fixed===0) return A('NA','B2S-only member — no monthly contribution.');
-      if(future) return A('NA','This month has not happened yet.');
-      if(snap.contr >= fixed) return A('Y', `Paid ${R(snap.contr)} (monthly amount ${R(fixed)}).`);
-      if(cumContr >= fixed*idx) return A('Y', `Covered by earlier payments (${R(cumContr)} paid to date).`);
-      return A('N', `Paid ${R(snap.contr)} this month against ${R(fixed)}; ${R(cumContr)} paid to date.`);
+      if(future) return A('NA','This period has not happened yet.');
+      const short = livePerMonths.filter(mn => cumTo(fiscalIndex(mn)) < fixed*fiscalIndex(mn) - 0.005);
+      const perMonth = livePerMonths.map(mn => `${mn} ${R(snapOf(mn).contr)}`).join(', ');
+      if(!short.length) return A('Y', `Contribution of ${R(fixed)} a month met for ${listM(livePerMonths)} (paid in the period: ${perMonth}; ${R(cumTo(lastIdx))} paid to date).`);
+      return A('N', `Short in ${listM(short)} against ${R(fixed)} a month (paid in the period: ${perMonth}; ${R(cumTo(lastIdx))} paid to date).`);
     },
     b2s(){
-      if(snap.b2s > 0 || row.b2sTotal > 0) return A('Y', `B2S recorded: ${R(row.b2sTotal)} to date.`);
+      if(snap.b2s > 0 || row.b2sTotal > 0) return A('Y', `B2S recorded: ${R(snap.b2s)} in the period, ${R(row.b2sTotal)} to date.`);
       if(fixed===0) return A('N','B2S-only member but no B2S payment is recorded.');
       return A('NA','No B2S recorded for this member.');
     },
     loanrec(){
-      return snap.taken > 0 ? A('Y', `Loan of ${R(snap.taken)} recorded this month.`) : A('NA','No loan taken this month.');
+      return snap.taken > 0 ? A('Y', `Loan(s) of ${R(snap.taken)} recorded in the period.`) : A('NA','No loan taken in the period.');
     },
     loanout(){
-      return row.loanBalance > 0 ? A('Y', `Balance ${R(row.loanBalance)} (taken ${R(entriesFor(member.full).reduce((s,e)=>s+(Number(e.taken)||0),0))}, repaid ${R(row.loanRepaid)}).`) : A('NA','No outstanding loan.');
+      return row.loanBalance > 0 ? A('Y', `Balance ${R(row.loanBalance)} (taken ${R(entriesFor(member.full).reduce((x,e)=>x+(Number(e.taken)||0),0))}, repaid ${R(row.loanRepaid)}).`) : A('NA','No outstanding loan.');
     },
     loanlimit(){
       if(row.loanBalance <= 0) return A('NA','No outstanding loan.');
@@ -5061,37 +5228,40 @@ function prefillAudit(member, monthLabel, points){
     },
     penrule(){
       if(fixed===0) return A('NA','B2S-only members are exempt from penalties.');
-      if(isNoPenaltyMonth(monthName)) return A('NA',monthName+' carries no penalties.');
-      const paid = snap.entries.filter(e => Number(e.contr)>0).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-      let expect = 0, why = '';
-      const timing = contributionTiming(monthName, paid.length ? paid[0].date : todayISO());
-      if(timing === 'missed'){
-        expect = missedTierAmount(member);
-        why = paid.length ? `paid on ${dayMonth(paid[0].date)}, after the deadline (${ordDay(dueLateDay())} of the following month)` : 'no contribution recorded and the deadline (${ordDay(dueLateDay())} of the following month) has passed';
-      } else if(timing === 'late'){
-        expect = Number(state.settings.late)||0;
-        why = paid.length ? `paid on ${dayMonth(paid[0].date)}, between the ${ordDay(dueOnTimeDay()+1)} and ${ordDay(dueLateDay())} of the following month` : 'no contribution recorded yet and it is past the ${ordDay(dueOnTimeDay())} of the following month';
-      }
-      if(expect > 0){
-        return snap.powng > 0 ? A('Y', `${why}; penalty ${R(snap.powng)} recorded.`)
-                              : A('N', `${why} but no penalty is recorded (check it was not an advance payment).`);
-      }
-      return snap.powng > 0 ? {answer:'', comment:`Penalty of ${R(snap.powng)} recorded although the payment looks on time — check the reason (e.g. interest not paid).`, auto:true}
-                            : A('Y','Paid on time; no penalty due.');
+      const months = livePerMonths.filter(mn => !isNoPenaltyMonth(mn));        // the club's penalty-free month carries no penalties
+      if(!months.length) return A('NA', future ? 'This period has not happened yet.' : 'The penalty-free month carries no penalties.');
+      const bad = [], ok = [], odd = [];
+      months.forEach(mn => {
+        const sn = snapOf(mn);
+        const paid = sn.entries.filter(e => Number(e.contr)>0).sort((x,y)=>String(x.date).localeCompare(String(y.date)));
+        const timing = contributionTiming(mn, paid.length ? paid[0].date : todayISO());
+        let expect = 0, why = '';
+        if(timing === 'missed'){ expect = missedTierAmount(member); why = paid.length ? `paid ${dayMonth(paid[0].date)}, after the ${ordDay(dueLateDay())}` : `not paid by the ${ordDay(dueLateDay())} of the following month`; }
+        else if(timing === 'late'){ expect = Number(state.settings.late)||0; why = paid.length ? `paid ${dayMonth(paid[0].date)}, between the ${ordDay(dueOnTimeDay()+1)} and ${ordDay(dueLateDay())}` : `not paid yet, past the ${ordDay(dueOnTimeDay())} of the following month`; }
+        if(expect > 0){ (sn.powng > 0 ? ok : bad).push(`${mn}: ${why}${sn.powng>0 ? ', penalty '+R(sn.powng) : ', no penalty recorded'}`); }
+        else if(sn.powng > 0) odd.push(`${mn}: penalty ${R(sn.powng)} although the payment looks on time (check the reason)`);
+      });
+      if(bad.length) return A('N', `${bad.join('; ')}. (check it was not an advance payment)`);
+      if(odd.length) return {answer:'', comment: odd.join('; '), auto:true};
+      return A('Y', ok.length ? `Penalties applied correctly: ${ok.join('; ')}.` : 'Paid on time in every month; no penalty due.');
     },
     penrec(){
-      if(snap.powng > 0) return A('Y', `Recorded: ${R(snap.powng)} — ${snap.entries.filter(e=>Number(e.powng)>0).map(e=>penaltyReason(e)).join('; ')}.`);
-      return A('NA','No penalties this month.');
+      if(snap.powng > 0) return A('Y', `Recorded: ${R(snap.powng)} — ${snap.entries.filter(e=>Number(e.powng)>0).map(e=>e.month+' '+penaltyReason(e)).join('; ')}.`);
+      return A('NA','No penalties in the period.');
     },
     general(){
-      return snap.entries.length ? A('Y', `${snap.entries.length} ledger entr${snap.entries.length===1?'y':'ies'} this month.`) : A('NA','No transactions this month.');
+      return snap.entries.length ? A('Y', `${snap.entries.length} ledger entr${snap.entries.length===1?'y':'ies'} in the period.`) : A('NA','No transactions in the period.');
     },
     penpay(){
       return row.penaltiesOwed > 0.005 ? A('N', `${R(row.penaltiesOwed)} of penalties still outstanding.`) : A('Y','No penalties outstanding.');
     },
     intpay(){
       if(row.loanBalance <= 0) return A('NA','No outstanding loan.');
-      return snap.intPay > 0 ? A('Y', `Interest of ${R(snap.intPay)} paid this month.`) : A('N','Loan outstanding but no interest paid this month.');
+      const months = livePerMonths.filter(mn => firstLoanIdx === null || fiscalIndex(mn) >= firstLoanIdx);
+      if(!months.length) return A('NA','The loan was taken after this period.');
+      const missing = months.filter(mn => !(snapOf(mn).intPay > 0));
+      return missing.length ? A('N', `Loan outstanding but no interest paid in ${listM(missing)} (interest paid in the period: ${R(snap.intPay)}).`)
+                            : A('Y', `Interest paid in every month (${R(snap.intPay)} in the period).`);
     },
   };
   return points.map(p => {
@@ -5127,8 +5297,8 @@ function ensureAuditDraft(){
 // alongside the checklist so the auditor has real numbers to check against,
 // not just their memory.
 function memberMonthSnapshot(memberFull, monthLabel){
-  const monthName = (monthLabel||'').split(' ')[0];
-  const entries = state.datalog.filter(d => d.name===memberFull && d.month===monthName);
+  const months = parseAuditLabel(monthLabel).months;      // a quarter (3 months) or a single month
+  const entries = state.datalog.filter(d => d.name===memberFull && months.includes(d.month));
   const sum = (k) => entries.reduce((s,e)=>s+(Number(e[k])||0),0);
   return {
     contr:sum('contr'), loanRep:sum('loanRep'), intPay:sum('intPay'), pena:sum('pena'),
@@ -5154,15 +5324,15 @@ function viewMemberAudit(){
     checklistBlock = `
     <div class="card" id="auditReportArea">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-        <h2><span class="dot"></span>${escapeHtml(member.full)} — ${escapeHtml(auditMonthLabel)}</h2>
+        <h2><span class="dot"></span>${escapeHtml(member.full)} — ${escapeHtml(auditMonthLabel)} <span class="hint">${escapeHtml(parseAuditLabel(auditMonthLabel).quarter ? parseAuditLabel(auditMonthLabel).text : '')}</span></h2>
         <button class="btn secondary no-print" id="exportAuditBtn">${icon('printer',15)} Export PDF</button>
       </div>
       <p class="sub">${answered}/${draft.answers.length} answered. Answers marked <span class="pill gray">auto</span> were filled in from this member's records — check them and change anything that is wrong. You can also reword, add or remove points.</p>
       <div class="grid g4" style="margin-bottom:16px">
-        <div class="kpi"><div class="v">${snap.contr?fmtR(snap.contr):'—'}</div><div class="l">Contribution paid</div></div>
-        <div class="kpi"><div class="v">${snap.intPay?fmtR(snap.intPay):'—'}</div><div class="l">Interest paid</div></div>
-        <div class="kpi"><div class="v">${snap.pena?fmtR(snap.pena):'—'}</div><div class="l">Penalties paid</div></div>
-        <div class="kpi"><div class="v">${snap.powng?fmtR(snap.powng):'—'}</div><div class="l">New penalty owing</div></div>
+        <div class="kpi"><div class="v">${snap.contr?fmtR(snap.contr):'—'}</div><div class="l">Contributions paid in the period</div></div>
+        <div class="kpi"><div class="v">${snap.intPay?fmtR(snap.intPay):'—'}</div><div class="l">Interest paid in the period</div></div>
+        <div class="kpi"><div class="v">${snap.pena?fmtR(snap.pena):'—'}</div><div class="l">Penalties paid in the period</div></div>
+        <div class="kpi"><div class="v">${snap.powng?fmtR(snap.powng):'—'}</div><div class="l">New penalties charged in the period</div></div>
       </div>
       <div class="grid g3" style="margin-bottom:16px">
         <div class="kpi"><div class="v">${fmtR(row.loanBalance)}</div><div class="l">Current loan balance</div></div>
@@ -5206,11 +5376,13 @@ function viewMemberAudit(){
   const execCard = execRows.length ? `
   <div class="card no-print">
     <h2><span class="dot"></span>Executive members</h2>
-    <p class="sub">The executives are audited first. Tap one to open their audit for ${escapeHtml(monthSel)}. ${auditorOnlyExecs() ? '' : 'Any other member can still be audited from the list below.'}</p>
+    <p class="sub">The executives are audited first. Audits are done every quarter and pull in all three months. Tap one to open their audit for ${escapeHtml(monthSel)}. ${auditorOnlyExecs() ? '' : 'Any other member can still be audited from the list below.'}</p>
     <div class="tablewrap"><table>
       <thead><tr><th>Member</th><th>Role</th><th>${escapeHtml(monthSel)}</th></tr></thead>
       <tbody>${execRows.map(x => {
-        const a = (auditHistoryCache||[]).find(h => h.month===monthSel && h.member_full===x.m.full);
+        const mper = parseAuditLabel(monthSel);
+        const a = (auditHistoryCache||[]).find(h => h.month===monthSel && h.member_full===x.m.full)
+          || (auditHistoryCache||[]).find(h => { const hp = parseAuditLabel(h.month); return h.member_full===x.m.full && !hp.quarter && hp.year===mper.year && mper.months.includes(hp.months[0]); });   // older single-month audit inside this quarter
         const st = !a ? '<span class="pill red">Not audited</span>' : (a.overall_status==='Complete' ? '<span class="pill green">Complete</span>' : '<span class="pill orange">Incomplete</span>');
         return `<tr style="cursor:pointer" data-openaudit-member="${escapeHtml(x.m.full)}" data-openaudit-month="${escapeHtml(monthSel)}"><td>${escapeHtml(x.m.full)}</td><td>${escapeHtml(x.e.role)}</td><td>${st}</td></tr>`;
       }).join('')}</tbody>
@@ -5220,11 +5392,11 @@ function viewMemberAudit(){
   return `
   ${execCard}
   <div class="card no-print">
-    <h2><span class="dot"></span>Select member &amp; month to audit</h2>
-    <p class="sub">${auditorOnlyExecs() ? 'Pick an executive member and a month' : 'Any member can be audited, not just executives (they are listed first) — pick one and a month'} to bring up their records. The checklist is filled in from their records and you can change anything.</p>
+    <h2><span class="dot"></span>Select member &amp; quarter to audit</h2>
+    <p class="sub">${auditorOnlyExecs() ? 'Pick an executive member and a quarter' : 'Any member can be audited, not just executives (they are listed first) — pick one and a quarter'} to bring up their records for all three months. The checklist is filled in from their records and you can change anything.</p>
     <div class="grid g2">
       <div><label>Member</label><select id="auditMemberSel"><option value="">Select member…</option>${auditMemberOptions(auditMemberFull)}</select></div>
-      <div><label>Month</label><select id="auditMonthSel">${monthOptions(auditMonthLabel ? auditMonthLabel.split(' ')[0] : currentAuditMonthLabel().split(' ')[0])}</select></div>
+      <div><label>Quarter</label><select id="auditMonthSel">${auditQuarters().map(q => `<option value="${q.id}" ${parseAuditLabel(auditMonthLabel || currentAuditMonthLabel()).qid===q.id?'selected':''}>${q.label}</option>`).join('')}${(() => { const cur = parseAuditLabel(auditMonthLabel || currentAuditMonthLabel()); return cur.quarter ? '' : `<option value="" selected>${escapeHtml(cur.text)} (single month, older audit)</option>`; })()}</select></div>
     </div>
     ${state.members.length===0 ? `<p class="sub" style="color:var(--red);margin-top:10px">No members could be loaded for this account. Ask the admin to run the latest database script (it gives auditors read access to member records).</p>` : ''}
   </div>
@@ -5235,7 +5407,7 @@ function viewMemberAudit(){
     <h2><span class="dot"></span>Audit history</h2>
     ${history.length===0 ? `<div class="empty">No audits saved yet.</div>` : `
     <div class="tablewrap"><table>
-      <thead><tr><th>Member</th><th>Month</th><th>Status</th><th>Signed off by</th><th>Last updated</th></tr></thead>
+      <thead><tr><th>Member</th><th>Period</th><th>Status</th><th>Signed off by</th><th>Last updated</th></tr></thead>
       <tbody>${history.map(a => `<tr style="cursor:pointer" data-openaudit-member="${escapeHtml(a.member_full||'')}" data-openaudit-month="${escapeHtml(a.month)}">
         <td>${escapeHtml(a.member_full||'—')}</td><td>${escapeHtml(a.month)}</td>
         <td>${a.overall_status==='Complete' ? '<span class="pill green">Complete</span>' : '<span class="pill orange">Incomplete</span>'}</td>
@@ -5254,7 +5426,7 @@ function wireMemberAudit(){
   const memberSel = document.getElementById('auditMemberSel');
   if(memberSel) memberSel.onchange = (e) => { auditMemberFull = e.target.value || null; auditDraft = null; render(); };
   const monthSel = document.getElementById('auditMonthSel');
-  if(monthSel) monthSel.onchange = (e) => { auditMonthLabel = e.target.value + ' ' + (state.settings.yearLabel||''); auditDraft = null; render(); };
+  if(monthSel) monthSel.onchange = (e) => { if(!e.target.value) return; auditMonthLabel = quarterAuditLabel(e.target.value); auditDraft = null; render(); };
 
   document.querySelectorAll('[data-answer]').forEach(el => el.onchange = () => {
     const a = ensureAuditDraft().answers[Number(el.dataset.answer)];
@@ -5341,6 +5513,190 @@ function wireMemberAudit(){
 }
 
 /* ---------------------------------------------------------------------
+   AUDIT SUMMARY — one place to pull the executive (member) audits by quarter and the
+   bank visits for the same period. Quarters follow the club's financial year (three months each). Bank audits happen on every bank visit,
+   so every visit in the period is listed.
+   --------------------------------------------------------------------- */
+// Quarters are three months each, counted from the start of the club's financial year (the club may start in any month).
+function auditQuarters(){
+  return [0,1,2,3].map(i => { const ms = MONTHS.slice(i*3, i*3+3);
+    return {id:'q'+(i+1), label:'Q'+(i+1)+' ('+ms[0]+'–'+ms[2]+')', months:ms}; });
+}
+const CAL_MONTHS = MON_SHORT;
+let sumYear = null, sumPeriod = null;
+
+function fiscalOfDate(iso){            // {fy, month, q} for a calendar date; December belongs to the NEXT financial year
+  const p = String(iso||'').slice(0,10).split('-').map(Number);
+  if(p.length < 3 || !p[0] || !p[1]) return null;
+  const month = CAL_MONTHS[p[1]-1];
+  const q = auditQuarters().find(x => x.months.includes(month));
+  const sm = startMonth();                                  // the financial year is named after the year it ends in
+  return {fy: (sm > 1 && p[1] >= sm) ? p[0]+1 : p[0], month, q: q ? q.id : null};
+}
+function summaryDefaults(){
+  if(sumYear === null){
+    const f = fiscalOfDate(todayISO());
+    sumYear = Number(state.settings.yearLabel) || (f && f.fy) || new Date().getFullYear();
+    sumPeriod = (f && f.fy === sumYear && f.q) ? f.q : 'year';
+  }
+}
+function periodMonths(){ const q = auditQuarters().find(x => x.id===sumPeriod); return q ? q.months : MONTHS; }
+function periodLabel(){ const q = auditQuarters().find(x => x.id===sumPeriod); return (q ? q.label : 'Full year (' + MONTHS[0] + '–' + MONTHS[11] + ')') + ' · financial year ' + sumYear; }
+
+function memberAuditSummaryData(){
+  const months = periodMonths();
+  const recs = (auditHistoryCache||[]).map(a => {
+    const per = parseAuditLabel(a.month);
+    let answers = []; try{ answers = JSON.parse(a.answers||'[]'); }catch(e){}
+    return Object.assign({}, a, {mName: per.quarter ? ('Q'+per.qid.slice(1)) : per.months[0], mYear: per.year, per, list: answers});
+  }).filter(a => a.mYear === sumYear && (a.per.quarter ? (sumPeriod==='year' || a.per.qid===sumPeriod) : months.includes(a.mName)));
+  const execs = executiveMembers();
+  const execNames = new Set(execs.map(x => x.m.full));
+  const tally = a => ({
+    yes: a.list.filter(x => x.answer==='Y').length, no: a.list.filter(x => x.answer==='N').length,
+    na: a.list.filter(x => x.answer==='NA').length, open: a.list.filter(x => !x.answer).length,
+    issues: a.list.filter(x => x.answer==='N').map(x => ({point:x.point, comment:x.comment||''}))
+  });
+  const build = (full, role) => {
+    const ord = a => a.per.quarter ? Number(a.per.qid.slice(1))*10 : (Math.floor((fiscalIndex(a.mName)-1)/3)+1)*10+fiscalIndex(a.mName)%3+1;
+    const mine = recs.filter(a => a.member_full === full).sort((a,b)=>ord(a)-ord(b));
+    return {full, role, audits: mine.map(a => Object.assign({month:a.mName, status:a.overall_status||'Incomplete', by:a.signed_off_by||a.auditor_name||'', date:a.signed_off_date||''}, tally(a)))};
+  };
+  const execRows = execs.map(x => build(x.m.full, x.e.role));
+  const otherNames = [...new Set(recs.map(a => a.member_full).filter(n => n && !execNames.has(n)))].sort();
+  const otherRows = otherNames.map(n => build(n, ''));
+  return {execRows, otherRows};
+}
+
+function bankSummaryData(){
+  const months = periodMonths();
+  const trips = (bankTripsCache||[]).filter(t => { const f = fiscalOfDate(t.trip_date); return f && f.fy === sumYear && months.includes(f.month); })
+    .slice().sort((a,b)=>String(a.trip_date).localeCompare(String(b.trip_date)));
+  const visits = trips.map(t => {
+    const loans = loansForTripDate(t.trip_date);
+    const loanTot = loans.reduce((x,l)=>x+(Number(l.amount)||0),0);
+    const notice = Number(t.notice_transfer)||0, misc = Number(t.misc_amount)||0, petrol = Number(t.petrol)||0;
+    return {t, loans, loanTot, notice, misc, petrol, outflow: loanTot+notice+misc+petrol, valid: tripValid(t)};
+  });
+  const sig = {};
+  visits.forEach(v => [['sig1',v.t.sig1],['sig2',v.t.sig2]].forEach(([k,n]) => { if(!n) return; sig[n] = sig[n] || {n:0, s1:0, s2:0}; sig[n].n++; sig[n][k==='sig1'?'s1':'s2']++; }));
+  const sum = k => visits.reduce((x,v)=>x+v[k],0);
+  return {visits, sig, totals:{count:visits.length, valid:visits.filter(v=>v.valid).length, loans:visits.reduce((x,v)=>x+v.loans.length,0),
+    loanTot:sum('loanTot'), notice:sum('notice'), misc:sum('misc'), petrol:sum('petrol'), outflow:sum('outflow')}};
+}
+
+function viewAuditSummary(){
+  summaryDefaults();
+  if(auditHistoryCache === null || (feat('bankAudit') && bankTripsCache === null)){
+    return `<div class="card"><p class="sub">Loading audit data…</p></div>`;
+  }
+  const yrs = new Set([sumYear, Number(state.settings.yearLabel)||sumYear]);
+  (auditHistoryCache||[]).forEach(a => { const y = Number(String(a.month||'').split(' ')[1]); if(y) yrs.add(y); });
+  (bankTripsCache||[]).forEach(t => { const f = fiscalOfDate(t.trip_date); if(f) yrs.add(f.fy); });
+  const yearList = [...yrs].sort((a,b)=>b-a);
+  const ma = memberAuditSummaryData(), bk = feat('bankAudit') ? bankSummaryData() : null;
+  const execDone = ma.execRows.filter(r => r.audits.length).length;
+  const execComplete = ma.execRows.filter(r => r.audits.some(a => a.status==='Complete')).length;
+  const statusPill = a => `<span class="pill ${a.status==='Complete'?'green':'orange'}">${escapeHtml(a.month)} · ${escapeHtml(a.status)}</span>`;
+  const memberRow = r => {
+    if(!r.audits.length) return `<tr><td>${escapeHtml(r.full)}</td><td>${escapeHtml(r.role)}</td><td colspan="6"><span class="pill red">Not audited in this period</span></td></tr>`;
+    const yes = r.audits.reduce((x,a)=>x+a.yes,0), no = r.audits.reduce((x,a)=>x+a.no,0), na = r.audits.reduce((x,a)=>x+a.na,0);
+    const last = r.audits[r.audits.length-1];
+    return `<tr><td>${escapeHtml(r.full)}</td><td>${escapeHtml(r.role)}</td><td>${r.audits.map(statusPill).join(' ')}</td>
+      <td class="num">${yes}</td><td class="num" style="color:${no?'var(--red)':'inherit'};font-weight:${no?700:400}">${no}</td><td class="num">${na}</td>
+      <td>${escapeHtml(last.by||'—')}</td><td>${last.date?fmtDate(last.date):'—'}</td></tr>`;
+  };
+  const allIssues = [...ma.execRows, ...ma.otherRows].flatMap(r => r.audits.flatMap(a => a.issues.map(i => ({full:r.full, month:a.month, point:i.point, comment:i.comment}))));
+  return `
+  <div class="card no-print">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <h2><span class="dot"></span>Audit summary</h2>
+      <div class="btnrow">
+        <button class="btn secondary sm" id="sumCsvMembersBtn">Member audits (CSV)</button>
+        ${feat('bankAudit') ? `<button class="btn secondary sm" id="sumCsvBankBtn">Bank visits (CSV)</button>` : ''}
+        <button class="btn secondary sm" id="sumPrintBtn">${icon('printer',13)} Print / PDF</button>
+      </div>
+    </div>
+    <div class="grid g3" style="margin-top:10px">
+      <div><label>Financial year</label><select id="sumYearSel">${yearList.map(y=>`<option value="${y}" ${y===sumYear?'selected':''}>${y}</option>`).join('')}</select></div>
+      <div><label>Period</label><select id="sumPeriodSel">${auditQuarters().map(q=>`<option value="${q.id}" ${q.id===sumPeriod?'selected':''}>${q.label}</option>`).join('')}<option value="year" ${sumPeriod==='year'?'selected':''}>Full year (${MONTHS[0]}–${MONTHS[11]})</option></select></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>Executive member audits · ${escapeHtml(periodLabel())}</h2>
+    <div class="grid g3" style="margin:10px 0">
+      <div class="kpi"><div class="v">${execDone} of ${ma.execRows.length}</div><div class="l">Executives audited</div></div>
+      <div class="kpi"><div class="v">${execComplete} of ${ma.execRows.length}</div><div class="l">With a complete audit</div></div>
+      <div class="kpi"><div class="v" style="color:${allIssues.length?'var(--red)':'inherit'}">${allIssues.length}</div><div class="l">Points answered "No"</div></div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Member</th><th>Role</th><th>Audits in period</th><th class="num">Yes</th><th class="num">No</th><th class="num">N/A</th><th>Signed off by</th><th>Date</th></tr></thead>
+      <tbody>${ma.execRows.length ? ma.execRows.map(memberRow).join('') : `<tr><td colspan="8" class="empty">No executives are set up.</td></tr>`}
+      ${ma.otherRows.length ? `<tr><td colspan="8" style="font-weight:700;background:var(--panel-2)">Other members audited in this period</td></tr>${ma.otherRows.map(memberRow).join('')}` : ''}</tbody>
+    </table></div>
+    ${allIssues.length ? `<h3 style="margin:16px 0 6px">Points answered "No"</h3>
+    <div class="tablewrap"><table><thead><tr><th>Member</th><th>Month</th><th>Point</th><th>Comment</th></tr></thead>
+    <tbody>${allIssues.map(i => `<tr><td>${escapeHtml(i.full)}</td><td>${i.month}</td><td>${escapeHtml(i.point)}</td><td>${escapeHtml(i.comment||'—')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+  </div>
+
+  ${bk ? `<div class="card">
+    <h2><span class="dot"></span>Bank audit · ${escapeHtml(periodLabel())}</h2>
+    ${bk.totals.count===0 ? `<div class="empty" style="margin-top:10px">No bank visits were recorded in this period.</div>` : `
+    <div class="grid g4" style="margin:10px 0">
+      <div class="kpi"><div class="v">${bk.totals.count}</div><div class="l">Bank visits${bk.totals.valid<bk.totals.count?` (${bk.totals.count-bk.totals.valid} incomplete)`:''}</div></div>
+      <div class="kpi"><div class="v">${bk.totals.loans} · ${fmtR(bk.totals.loanTot)}</div><div class="l">Loans disbursed</div></div>
+      <div class="kpi"><div class="v">${fmtR(bk.totals.notice)}</div><div class="l">Notice account transfers</div></div>
+      <div class="kpi"><div class="v">${fmtR(bk.totals.outflow)}</div><div class="l">Total outflows (incl. misc ${fmtR(bk.totals.misc)}, petrol ${fmtR(bk.totals.petrol)})</div></div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Date</th><th>Signatories</th><th class="num">Loans</th><th class="num">Notice transfer</th><th class="num">Misc</th><th class="num">Petrol</th><th class="num">Outflow</th><th>Status</th></tr></thead>
+      <tbody>${bk.visits.map(v => `<tr><td>${fmtDate(v.t.trip_date)}</td><td>${escapeHtml(v.t.sig1||'—')} &amp; ${escapeHtml(v.t.sig2||'—')}</td>
+        <td class="num">${v.loans.length ? v.loans.length+' · '+fmtR(v.loanTot) : '—'}</td><td class="num">${v.notice?fmtR(v.notice):'—'}</td>
+        <td class="num">${v.misc?fmtR(v.misc):'—'}${v.t.misc_desc?`<div class="hint">${escapeHtml(v.t.misc_desc)}</div>`:''}</td><td class="num">${v.petrol?fmtR(v.petrol):'—'}</td>
+        <td class="num" style="font-weight:700">${fmtR(v.outflow)}</td><td>${v.valid?'<span class="pill green">✓ Valid</span>':'<span class="pill red">⚠ Incomplete</span>'}</td></tr>`).join('')}</tbody>
+      <tfoot><tr style="font-weight:700"><td colspan="2">Totals</td><td class="num">${bk.totals.loans} · ${fmtR(bk.totals.loanTot)}</td><td class="num">${fmtR(bk.totals.notice)}</td><td class="num">${fmtR(bk.totals.misc)}</td><td class="num">${fmtR(bk.totals.petrol)}</td><td class="num">${fmtR(bk.totals.outflow)}</td><td></td></tr></tfoot>
+    </table></div>
+    <h3 style="margin:16px 0 6px">Signatory attendance</h3>
+    <div class="tablewrap"><table><thead><tr><th>Signatory</th><th class="num">Visits attended</th><th class="num">As signatory 1</th><th class="num">As signatory 2</th></tr></thead>
+    <tbody>${Object.keys(bk.sig).sort().map(n => `<tr><td>${escapeHtml(n)}</td><td class="num">${bk.sig[n].n}</td><td class="num">${bk.sig[n].s1}</td><td class="num">${bk.sig[n].s2}</td></tr>`).join('')}</tbody></table></div>`}
+  </div>` : ''}`;
+}
+
+function csvCell(v){ v = String(v==null?'':v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+function downloadCsv(name, rows){
+  const blob = new Blob(['﻿' + rows.map(r => r.map(csvCell).join(',')).join('\n')], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+}
+
+function wireAuditSummary(){
+  if(auditHistoryCache === null || (feat('bankAudit') && bankTripsCache === null)){
+    Promise.all([auditHistoryCache===null ? loadAuditHistory() : null, (feat('bankAudit') && bankTripsCache===null) ? loadBankAuditData() : null]).then(render);
+    return;
+  }
+  summaryDefaults();
+  const y = document.getElementById('sumYearSel'); if(y) y.onchange = e => { sumYear = Number(e.target.value); render(); };
+  const pr = document.getElementById('sumPeriodSel'); if(pr) pr.onchange = e => { sumPeriod = e.target.value; render(); };
+  const pb = document.getElementById('sumPrintBtn'); if(pb) pb.onclick = () => exportPdf('landscape');
+  const slug = () => 'audit-' + sumYear + '-' + sumPeriod;
+  const cm = document.getElementById('sumCsvMembersBtn');
+  if(cm) cm.onclick = () => {
+    const ma = memberAuditSummaryData(); const rows = [['Member','Role','Month','Status','Yes','No','N/A','Unanswered','Signed off by','Date','Points answered No']];
+    [...ma.execRows, ...ma.otherRows].forEach(r => {
+      if(!r.audits.length) rows.push([r.full, r.role, '', 'Not audited', '', '', '', '', '', '', '']);
+      r.audits.forEach(a => rows.push([r.full, r.role, a.month, a.status, a.yes, a.no, a.na, a.open, a.by, a.date, a.issues.map(i => i.point + (i.comment?' ('+i.comment+')':'')).join(' | ')]));
+    });
+    downloadCsv('member-' + slug() + '.csv', rows);
+  };
+  const cb = document.getElementById('sumCsvBankBtn');
+  if(cb) cb.onclick = () => {
+    const bk = bankSummaryData(); const rows = [['Date','Signatory 1','Signatory 2','Loans (count)','Loans (R)','Notice transfer (R)','Misc description','Misc (R)','Petrol (R)','Outflow (R)','Status']];
+    bk.visits.forEach(v => rows.push([v.t.trip_date, v.t.sig1||'', v.t.sig2||'', v.loans.length, v.loanTot, v.notice, v.t.misc_desc||'', v.misc, v.petrol, v.outflow, v.valid?'Valid':'Incomplete']));
+    downloadCsv('bank-' + slug() + '.csv', rows);
+  };
+}
+
+/* ---------------------------------------------------------------------
    AUDIT WRAPPER — two audit types, one sub-tab switcher: Member Audit
    (compliance checklist) and Bank Audit (trip + loan register).
    --------------------------------------------------------------------- */
@@ -5352,11 +5708,12 @@ function viewAudit(){
     <div class="navtabs" style="padding:12px">
       <button class="navtab ${auditSubTab==='member'?'active':''}" data-audittab="member">${icon('calcheck',16)} Member Audit</button>
       ${feat('bankAudit') ? `<button class="navtab ${auditSubTab==='bank'?'active':''}" data-audittab="bank">${icon('trend',16)} Bank Audit</button>` : ''}
+      <button class="navtab ${auditSubTab==='summary'?'active':''}" data-audittab="summary">${icon('file',16)} Summary</button>
       ${Auth.isAuditor() && feat('penalties') ? `<button class="navtab ${auditSubTab==='penalties'?'active':''}" data-audittab="penalties">${icon('file',16)} Penalties</button>
       <button class="navtab ${auditSubTab==='activity'?'active':''}" data-audittab="activity">${icon('file',16)} Activity Log</button>` : ''}
     </div>
   </div>
-  ${auditSubTab==='member' ? viewMemberAudit() : auditSubTab==='bank' ? viewBankAudit() : auditSubTab==='penalties' ? viewPenalties({readonly:true}) : viewActivity()}`;
+  ${auditSubTab==='member' ? viewMemberAudit() : auditSubTab==='bank' ? viewBankAudit() : auditSubTab==='summary' ? viewAuditSummary() : auditSubTab==='penalties' ? viewPenalties({readonly:true}) : viewActivity()}`;
 }
 
 function wireAudit(){
@@ -5365,6 +5722,7 @@ function wireAudit(){
   });
   if(auditSubTab==='member') wireMemberAudit();
   else if(auditSubTab==='bank') wireBankAudit();
+  else if(auditSubTab==='summary') wireAuditSummary();
   else if(auditSubTab==='penalties') wirePenalties();
   else wireActivity();
 }
