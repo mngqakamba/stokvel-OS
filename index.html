@@ -2297,12 +2297,12 @@ function viewEntry(){
     <p class="sub">Leave any field blank or 0 if it doesn't apply. B2S-only members are exempt from penalties automatically.</p>
     <div class="grid g4">
       <div><label>Contribution</label><input type="number" id="eContr" min="0" step="0.01" placeholder="0"></div>
-      <div ${feat('loans')?'':'hidden style="display:none"'}><label> — not required</span></label><input type="number" id="eLoanRep" min="0" step="0.01" placeholder="0"></div>
-      <div ${feat('loans')?'':'hidden style="display:none"'}><label><input type="number" id="eIntPay" min="0" step="0.01" placeholder="0"></div>
-      <div ${feat('penalties')?'':'hidden style="display:none"'}><label><input type="number" id="ePena" min="0" step="0.01" placeholder="0"></div>
-      <div ${feat('b2s')?'':'hidden style="display:none"'}><label><input type="number" id="eB2s" min="0" step="0.01" placeholder="0"></div>
-      <div ${feat('funeral')?'':'hidden style="display:none"'}><label><input type="number" id="eFuneral" min="0" step="0.01" placeholder="0"></div>
-      <div ${feat('loans')?'':'hidden style="display:none"'}><label></span></label><input type="number" id="eTaken" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('loans')?'':'hidden style="display:none"'}><label>Loan Repayment</label><input type="number" id="eLoanRep" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('loans')?'':'hidden style="display:none"'}><label>Interest Paid</label><input type="number" id="eIntPay" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('penalties')?'':'hidden style="display:none"'}><label>Penalties Paid</label><input type="number" id="ePena" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('b2s')?'':'hidden style="display:none"'}><label>Back 2 School (B2S)</label><input type="number" id="eB2s" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('funeral')?'':'hidden style="display:none"'}><label>Funeral Fund</label><input type="number" id="eFuneral" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('loans')?'':'hidden style="display:none"'}><label>Loan <span class="hint">new loan taken</span></label><input type="number" id="eTaken" min="0" step="0.01" placeholder="0"></div>
     </div>
     <div class="btnrow" style="margin-top:16px">
       <button class="btn" id="addEntryBtn">${icon('plus',15)} Add to batch</button>
