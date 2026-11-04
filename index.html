@@ -168,6 +168,13 @@
     table.freeze th, table.freeze td{position:static !important;box-shadow:none !important}
     table{width:100% !important;table-layout:auto;font-size:7.5px !important}
     th,td{padding:3px 4px !important;white-space:normal !important;word-break:break-word;border:none !important}
+    /* Main Sheet: all columns on one landscape page */
+    table.sheetprint{table-layout:fixed !important;font-size:7px !important}
+    table.sheetprint th,table.sheetprint td{padding:3px 2px !important;white-space:nowrap !important;word-break:normal !important;overflow:hidden;text-overflow:clip}
+    table.sheetprint th{white-space:normal !important;line-height:1.15;vertical-align:bottom;font-size:6.5px !important}
+    table.sheetprint th:nth-child(1),table.sheetprint td:nth-child(1){width:2.5%}
+    table.sheetprint th:nth-child(2),table.sheetprint td:nth-child(2){width:14%;text-overflow:ellipsis}
+    .topscroll{display:none !important}
     h2{font-size:12px}
     .sub{font-size:9px}
     /* Zebra striping instead of grid lines — needs this to survive most browsers'
@@ -2302,7 +2309,7 @@ function viewEntry(){
       <div ${feat('penalties')?'':'hidden style="display:none"'}><label>Penalties Paid</label><input type="number" id="ePena" min="0" step="0.01" placeholder="0"></div>
       <div ${feat('b2s')?'':'hidden style="display:none"'}><label>Back 2 School (B2S)</label><input type="number" id="eB2s" min="0" step="0.01" placeholder="0"></div>
       <div ${feat('funeral')?'':'hidden style="display:none"'}><label>Funeral Fund</label><input type="number" id="eFuneral" min="0" step="0.01" placeholder="0"></div>
-      <div ${feat('loans')?'':'hidden style="display:none"'}><label>Loan <span class="hint">new loan taken</span></label><input type="number" id="eTaken" min="0" step="0.01" placeholder="0"></div>
+      <div ${feat('loans')?'':'hidden style="display:none"'}><label>Loan Request</label><input type="number" id="eTaken" min="0" step="0.01" placeholder="0"></div>
     </div>
     <div class="btnrow" style="margin-top:16px">
       <button class="btn" id="addEntryBtn">${icon('plus',15)} Add to batch</button>
@@ -2555,7 +2562,7 @@ function viewSheet(){
       </div>
       <button class="btn secondary no-print" id="printSheetBtn">${icon('printer',15)} Export PDF</button>
     </div>
-    <div class="tablewrap"><table class="freeze">
+    <div class="tablewrap"><table class="freeze sheetprint">
       <thead><tr>
         <th>#</th><th>Member</th><th class="num">Fixed</th><th class="num">Total Contr</th><th class="num">Outstanding</th>
         <th class="num">Loan</th><th class="num">Loan Repaid</th><th class="num">Interest Accrued</th><th class="num">Interest Paid</th>
