@@ -157,6 +157,100 @@
   .kpi .v{font-size:22px;font-weight:800}
   .kpi .l{font-size:11.5px;color:var(--muted);margin-top:2px}
 
+  /* ── Loan cards ─────────────────────────────────────────────────── */
+  .loan-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-bottom:14px;transition:box-shadow .15s}
+  .loan-card:hover{box-shadow:0 2px 12px rgba(0,0,0,.08)}
+  .loan-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .loan-card-name{font-size:17px;font-weight:700;color:var(--text)}
+  .loan-card-meta{font-size:12.5px;color:var(--muted);margin-top:3px}
+  .loan-card-actions{display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap}
+  .loan-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:16px}
+  @media(max-width:700px){.loan-stats{grid-template-columns:repeat(2,1fr)}}
+  .loan-stat{background:var(--panel-2);border-radius:10px;padding:10px 12px;text-align:center}
+  .loan-stat.red-bg{background:#fdeaea}
+  .loan-stat .ls-label{font-size:11px;color:var(--muted);margin-bottom:4px}
+  .loan-stat .ls-val{font-size:15px;font-weight:800;color:var(--green)}
+  .loan-stat.red-bg .ls-val{color:var(--red)}
+  .loan-expand{margin-top:14px;border-top:1px solid var(--line);padding-top:12px;display:none}
+  .loan-expand.open{display:block}
+  .loan-expand-toggle{background:none;border:none;cursor:pointer;color:var(--muted);font-size:13px;display:flex;align-items:center;gap:5px;padding:4px 0;margin-top:8px}
+  .loan-expand-toggle:hover{color:var(--green)}
+  .btn-settle{padding:6px 14px;border-radius:20px;border:1.5px solid var(--green);background:transparent;color:var(--green);font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .13s}
+  .btn-settle:hover{background:var(--green);color:#fff}
+  .btn-loan-del{padding:6px 12px;border-radius:20px;border:1.5px solid #fca5a5;background:transparent;color:var(--red);font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .13s}
+  .btn-loan-del:hover{background:#fdeaea}
+
+  /* ── Member card list ───────────────────────────────────────────── */
+  .member-list{display:flex;flex-direction:column;gap:0}
+  .member-row{display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s}
+  .member-row:last-child{border-bottom:none}
+  .member-row:hover{background:var(--panel-2);border-radius:8px;padding-left:8px;padding-right:8px;margin:0 -8px}
+  .member-row.selected{background:var(--panel-2);border-radius:8px;padding-left:8px;padding-right:8px;margin:0 -8px}
+  .member-avatar{width:40px;height:40px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0}
+  .member-avatar.inactive{background:var(--muted)}
+  .member-info{flex:1;min-width:0}
+  .member-info .mname{font-weight:600;font-size:14.5px;color:var(--text)}
+  .member-info .msub{font-size:12px;color:var(--muted);margin-top:1px}
+  .member-pills{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .member-actions{display:flex;gap:4px;align-items:center;flex-shrink:0}
+  .icon-btn{background:none;border:none;cursor:pointer;padding:6px;border-radius:6px;color:var(--muted);display:flex;align-items:center;transition:background .12s,color .12s}
+  .icon-btn:hover{background:var(--panel-2);color:var(--green)}
+  .icon-btn.danger:hover{background:#fdeaea;color:var(--red)}
+  .member-list-header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px}
+
+  /* ── Attendance card list ────────────────────────────────────────── */
+  .att-list{display:flex;flex-direction:column;gap:0}
+  .att-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+  .att-row:last-child{border-bottom:none}
+  .att-row.exempt{opacity:.55}
+  .att-num{width:26px;font-size:12px;color:var(--muted);text-align:right;flex-shrink:0}
+  .att-name{flex:1;min-width:0}
+  .att-name .anm{font-weight:600;font-size:14px;color:var(--text)}
+  .att-name .asub{font-size:11.5px;color:var(--muted);margin-top:1px}
+  .att-btns{display:flex;gap:5px;flex-wrap:wrap}
+  .att-btn{padding:5px 11px;border-radius:20px;border:1.5px solid var(--line);background:transparent;font-size:12.5px;font-weight:500;cursor:pointer;color:var(--muted);transition:all .13s;white-space:nowrap}
+  .att-btn:hover{border-color:var(--green);color:var(--green)}
+  .att-btn.active-present{background:var(--green);color:#fff;border-color:var(--green)}
+  .att-btn.active-apology{background:#e6f4ea;color:var(--green);border-color:var(--green)}
+  .att-btn.active-absent{background:#fdeaea;color:var(--red);border-color:var(--red)}
+  .att-btn.active-exempt{background:var(--panel-2);color:var(--muted);border-color:var(--line)}
+  .att-penalty{font-size:13px;font-weight:700;min-width:52px;text-align:right;flex-shrink:0}
+  .att-penalty.has-pen{color:var(--red)}
+
+  @media(max-width:640px){
+    .card{padding:16px 14px;border-radius:12px;margin-bottom:12px}
+    .card h2{font-size:15px}
+    #mainArea{padding:4px 10px 60px !important}
+    .topbar{padding:10px 14px;gap:10px}
+    .brand-badge{height:46px}
+    .brand-text h1{font-size:15px}
+    .navcard{width:calc(100% - 20px)}
+    .kpi{padding:12px 10px}
+    .kpi .v{font-size:18px}
+    .att-row{flex-wrap:wrap;align-items:flex-start;row-gap:7px;column-gap:8px;padding:12px 0}
+    .att-num{padding-top:4px;width:20px}
+    .att-name{flex:1 1 0;min-width:0}
+    .att-penalty{margin-left:auto;padding-top:2px;min-width:40px}
+    .att-btns{flex:0 0 100%;padding-left:28px;gap:5px;flex-wrap:wrap}
+    .att-btn{padding:6px 11px;font-size:12.5px}
+    .member-row{flex-wrap:wrap;align-items:center;row-gap:4px;column-gap:10px;padding:11px 0}
+    .member-avatar{width:34px;height:34px;font-size:12px;flex-shrink:0}
+    .member-info{flex:1 1 0;min-width:0}
+    .member-info .mname{font-size:13.5px}
+    .member-pills{flex:0 0 100%;padding-left:44px;gap:4px}
+    .member-actions{flex-shrink:0;gap:2px}
+    .icon-btn{width:32px;height:32px}
+    .loan-card{padding:14px 14px}
+    .loan-card-actions{gap:6px}
+    .btn-settle,.btn-loan-del{font-size:12px;padding:5px 10px}
+    .loan-stats{grid-template-columns:repeat(2,1fr);gap:7px;margin-top:12px}
+    .tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    table{font-size:12px}
+    th,td{padding:7px 8px;white-space:nowrap}
+    .member-list-header{flex-direction:column;align-items:flex-start;gap:8px}
+    .member-list-header > div{width:100%;justify-content:flex-end}
+  }
+
   @media print{
     .topbar,.navcard,.ticker,.syncbar,.no-print{display:none !important}
     body{background:#fff}
@@ -1084,10 +1178,11 @@ const Auth = {
   isCapture(){ return this.role() === 'capture'; },
   isMember(){ return this.role() === 'member'; },
   isAuditor(){ return this.role() === 'auditor'; },
+  isExecAuditor(){ return this.role() === 'exec_auditor'; },   // member-only auditor: exec members, no bank audit
   isViewer(){ return this.role() === 'viewer'; },
   canManage(){ return this.isAdmin(); },                       // members, bulk, resign, new year, settings, users
   canCapture(){ return this.isAdmin() || this.isCapture(); },  // data entry, attendance, add loan
-  canAudit(){ return this.isAdmin() || this.isAuditor(); },    // the audit tool
+  canAudit(){ return this.isAdmin() || this.isAuditor() || this.isExecAuditor(); },    // the audit tool
 };
 
 /* ---------------------------------------------------------------------
@@ -2718,40 +2813,57 @@ function viewMembers(){
   const selected = state.selectedMemberFull ? state.members.find(m => m.full===state.selectedMemberFull) : null;
 
   return `
-  ${can('members') ? `
   <div class="card">
-    <h2><span class="dot"></span>Add member</h2>
-    <div class="grid g3">
-      <div><label>Surname <span class="req">*</span></label><input type="text" id="mSur" placeholder="e.g. Dlamini"></div>
-      <div><label>First name <span class="req">*</span></label><input type="text" id="mNam" placeholder="e.g. Jane"></div>
-      <div><label>Fixed contribution (R) <span class="hint">0 = B2S-only, exempt from penalties</span></label>
-        <input type="number" id="mFixed" min="0" step="1" value="1000"></div>
+    <div class="member-list-header">
+      <h2 style="margin:0"><span class="dot"></span>Club Members ${q?`— matching "${escapeHtml(q)}"`:''} <span style="color:var(--muted);font-weight:400">(${members.length})</span></h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:7px;font-weight:400;font-size:13px;color:var(--muted)"><input type="checkbox" id="showResignedToggle" ${showResignedMembers?'checked':''}> Show inactive</label>
+        ${can('members') ? `
+        <button class="btn secondary" id="toggleBulkBtn" style="padding:7px 14px;font-size:13px">${icon('layers',13)} ${membersBulkOpen?'Hide bulk':'Bulk'}</button>
+        <button class="btn" id="addMemberBtn" style="padding:7px 16px;font-size:13px">${icon('plus',14)} Add Member</button>` : ''}
+      </div>
     </div>
-    <div class="btnrow" style="margin-top:14px">
-      <button class="btn" id="addMemberBtn">${icon('plus',15)} Add member</button>
-      <button class="btn secondary" id="toggleBulkBtn">${icon('layers',15)} ${membersBulkOpen?'Hide bulk tools':'Bulk add / delete'}</button>
+    ${can('members') ? `
+    <div id="addMemberForm" style="margin-top:16px;padding:16px;background:var(--panel-2);border-radius:10px;display:none">
+      <div class="grid g3">
+        <div><label>Surname <span class="req">*</span></label><input type="text" id="mSur" placeholder="e.g. Dlamini"></div>
+        <div><label>First name <span class="req">*</span></label><input type="text" id="mNam" placeholder="e.g. Jane"></div>
+        <div><label>Fixed contribution (R) <span class="hint">0 = B2S-only</span></label>
+          <input type="number" id="mFixed" min="0" step="1" value="1000"></div>
+      </div>
+      <div class="btnrow" style="margin-top:12px">
+        <button class="btn" id="saveMemberBtn">${icon('plus',14)} Save member</button>
+        <button class="btn secondary" id="cancelAddMemberBtn">Cancel</button>
+      </div>
+    </div>` : ''}
+    <div class="member-list" style="margin-top:${can('members')?'8px':'0'}">
+      ${members.length === 0 ? `<div class="empty">No members found.</div>` :
+        members.map((m, i) => {
+          const initials = (m.name[0]||'?').toUpperCase() + (m.surname[0]||'').toUpperCase();
+          const typePill = m.resigned ? `<span class="pill red">Inactive</span>` : (Number(m.fixed)===0 ? `<span class="pill orange">B2S-only</span>` : `<span class="pill green">Regular</span>`);
+          const statusPill = !m.resigned ? `<span class="pill ${Number(m.fixed)===0?'orange':'green'}">Active</span>` : '';
+          const oopPill = m.outOfProvince && !m.resigned ? `<span class="pill gray">OOP</span>` : '';
+          const isSelected = state.selectedMemberFull === m.full;
+          return `<div class="member-row${isSelected?' selected':''}" data-select="${escapeHtml(m.full)}" style="${m.resigned?'opacity:.6':''}">
+            <div style="width:26px;text-align:right;font-size:12px;color:var(--muted);flex-shrink:0">${i+1}</div>
+            <div class="member-avatar${m.resigned?' inactive':''}">${escapeHtml(initials)}</div>
+            <div class="member-info">
+              <div class="mname">${escapeHtml(m.surname)}, ${escapeHtml(m.name)}</div>
+              <div class="msub">Fixed contribution: ${fmtR(m.fixed)}</div>
+            </div>
+            <div class="member-pills">${typePill}${statusPill?' '+statusPill:''}${oopPill?' '+oopPill:''}</div>
+            ${can('members') ? `<div class="member-actions">
+              <button class="icon-btn" title="Edit name, contribution, status, OOP" data-editmbr="${escapeHtml(m.full)}">${icon('edit',16)}</button>
+              <button class="icon-btn" title="Assign login / role" data-assignmbr="${escapeHtml(m.full)}">${icon('user',16)}</button>
+              <button class="icon-btn danger" title="Delete" data-delmbr="${escapeHtml(m.full)}">${icon('trash',16)}</button>
+            </div>` : ''}
+          </div>`;
+        }).join('')
+      }
     </div>
   </div>
-  ${membersBulkOpen ? viewBulkPanel(members) : ''}
-  ` : ''}
 
-  <div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-      <h2><span class="dot"></span>Members ${q?`— matching "${escapeHtml(q)}"`:''} <span style="color:var(--muted);font-weight:400">(${members.length})</span></h2>
-      <label style="display:flex;align-items:center;gap:8px;font-weight:400;font-size:13px"><input type="checkbox" id="showResignedToggle" ${showResignedMembers?'checked':''}> Show inactive (resigned) members</label>
-    </div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>#</th><th>Surname</th><th>First name</th><th class="num">Fixed Contr</th><th>Type</th><th></th></tr></thead>
-      <tbody>
-        ${members.map((m,i) => `<tr style="cursor:pointer;${state.selectedMemberFull===m.full?'background:var(--panel-2)':''}${m.resigned?';opacity:.55':''}" data-select="${escapeHtml(m.full)}">
-          <td>${i+1}</td><td>${escapeHtml(m.surname)}</td><td>${escapeHtml(m.name)}</td>
-          <td class="num">${fmtR(m.fixed)}</td>
-          <td>${m.resigned ? '<span class="pill red">Inactive</span>' : (Number(m.fixed)===0 ? '<span class="pill orange">B2S-only</span>' : '<span class="pill green">Active</span>')}</td>
-          <td>${icon('chev',14)}</td>
-        </tr>`).join('') || `<tr><td colspan="6"><div class="empty">No members found.</div></td></tr>`}
-      </tbody>
-    </table></div>
-  </div>
+  ${membersBulkOpen && can('members') ? viewBulkPanel(members) : ''}
 
   ${selected ? memberDetailHtml(selected, {readonly: !canCapture()}) : ''}
 
@@ -3003,7 +3115,14 @@ function wireMembers(){
   });
 
   if(can('members')){
-    document.getElementById('addMemberBtn').onclick = async () => {
+    const addMemberBtn = document.getElementById('addMemberBtn');
+    if(addMemberBtn) addMemberBtn.onclick = () => {
+      const form = document.getElementById('addMemberForm');
+      if(form) form.style.display = form.style.display==='none' ? 'block' : 'none';
+    };
+
+    const saveMemberBtn = document.getElementById('saveMemberBtn');
+    if(saveMemberBtn) saveMemberBtn.onclick = async () => {
       const sur = document.getElementById('mSur').value.trim();
       const nam = document.getElementById('mNam').value.trim();
       const fixed = Number(document.getElementById('mFixed').value) || 0;
@@ -3018,7 +3137,31 @@ function wireMembers(){
       render();
     };
 
+    const cancelAddMemberBtn = document.getElementById('cancelAddMemberBtn');
+    if(cancelAddMemberBtn) cancelAddMemberBtn.onclick = () => {
+      const form = document.getElementById('addMemberForm');
+      if(form) form.style.display = 'none';
+    };
+
     document.getElementById('toggleBulkBtn').onclick = () => { membersBulkOpen = !membersBulkOpen; render(); };
+
+    // Row-level icon buttons
+    document.querySelectorAll('[data-editmbr]').forEach(b => b.onclick = (e) => { e.stopPropagation(); openRenameModal(state.members.find(m=>m.full===b.dataset.editmbr)?.id); });
+    document.querySelectorAll('[data-assignmbr]').forEach(b => b.onclick = (e) => { e.stopPropagation(); state.selectedMemberFull = b.dataset.assignmbr; render(); });
+    document.querySelectorAll('[data-delmbr]').forEach(b => b.onclick = async (e) => {
+      e.stopPropagation();
+      const full = b.dataset.delmbr;
+      const mem = state.members.find(m => m.full===full);
+      if(!mem) return;
+      const plan = planMemberDeletion([full]);
+      const ok = await confirmModal('Delete member', `Delete <b>${escapeHtml(full)}</b> and remove their history rows from DataLog? ` +
+        (plan.kept.length ? `The <b>${fmtR(plan.keptPen)}</b> of penalties they already paid stays in the DataLog. ` : `They have no paid penalties on record. `) +
+        `This can't be undone.`, 'Delete', true);
+      if(!ok) return;
+      await applyMemberDeletion([mem], plan);
+      toast(full + ' deleted.' + (plan.keptPen ? ' ' + fmtR(plan.keptPen) + ' of paid penalties kept.' : ''));
+      render();
+    });
 
     const bulkAddBtn = document.getElementById('bulkAddBtn');
     if(bulkAddBtn) bulkAddBtn.onclick = async () => {
@@ -3265,46 +3408,261 @@ function openRenameModal(memberId){
 /* ---------------------------------------------------------------------
    VIEW: LOANS
    --------------------------------------------------------------------- */
+let loanExpandOpen = {};  // {memberFull: true/false}
+let loanStatusFilter = 'all';   // 'all' | 'active' | 'settled'
+let loanMemberFilter = '';      // '' = all members, else member full name
+
 function viewLoans(){
-  const rows = allMemberRows().filter(r => r.loanBalance > 0.5 || r.interestAccrued > 0.5);
-  const totalOut = rows.reduce((s,r)=>s+r.loanBalance,0);
-  const totalInt = rows.reduce((s,r)=>s+r.interestAccrued,0);
+  // All members who have ever had a loan this year
+  const allRows = allMemberRows().filter(r => {
+    const loanEntries = currentEntriesFor(r.member.full).filter(e => Number(e.taken) > 0);
+    return loanEntries.length > 0;
+  });
+  const activeRows = allRows.filter(r => r.loanBalance > 0.5 || r.interestAccrued > 0.5);
+  const settledRows = allRows.filter(r => r.loanBalance <= 0.5 && r.interestAccrued <= 0.5);
+
+  let rows = loanStatusFilter === 'active' ? activeRows : loanStatusFilter === 'settled' ? settledRows : allRows;
+  if(loanMemberFilter) rows = rows.filter(r => r.member.full === loanMemberFilter);
+  rows = rows.slice().sort((a,b) => b.totalOwing - a.totalOwing || (a.member.full).localeCompare(b.member.full));
+
+  const totalOut = activeRows.reduce((s,r)=>s+r.loanBalance,0);
+  const intRate = Math.round((state.settings.intRate||0)*100);
+  const allLoanMembers = allRows.map(r => r.member.full).sort((a,b)=>a.localeCompare(b));
+
   return `
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+    <div class="grid g3" style="flex:1;min-width:0">
+      <div class="kpi"><div class="v">${activeRows.length}</div><div class="l">Active Loans</div></div>
+      <div class="kpi"><div class="v" style="color:var(--green)">${fmtR(totalOut)}</div><div class="l">Total Principal</div></div>
+      <div class="kpi"><div class="v">${allRows.length}</div><div class="l">Total Loans</div></div>
+    </div>
+    ${can('members') ? `<button class="btn" id="showNewLoanFormBtn" style="white-space:nowrap">${icon('plus',15)} New Loan</button>` : ''}
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+    <select id="loanStatusFilterSel" style="padding:7px 32px 7px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--surface);color:var(--text);cursor:pointer">
+      <option value="all" ${loanStatusFilter==='all'?'selected':''}>All Statuses</option>
+      <option value="active" ${loanStatusFilter==='active'?'selected':''}>Active</option>
+      <option value="settled" ${loanStatusFilter==='settled'?'selected':''}>Settled</option>
+    </select>
+    <select id="loanMemberFilterSel" style="padding:7px 32px 7px 12px;border:1.5px solid var(--line);border-radius:8px;font-size:13px;background:var(--surface);color:var(--text);cursor:pointer">
+      <option value="">All Members</option>
+      ${allLoanMembers.map(f=>`<option value="${escapeHtml(f)}" ${loanMemberFilter===f?'selected':''}>${escapeHtml(f)}</option>`).join('')}
+    </select>
+    ${(loanStatusFilter!=='all'||loanMemberFilter) ? `<button class="btn secondary sm" id="clearLoanFiltersBtn">✕ Clear filters</button>` : ''}
+  </div>
+
+  ${can('members') ? `
+  <div id="newLoanForm" style="display:none;margin-bottom:18px">
   <div class="card">
     <h2><span class="dot"></span>Record a new loan</h2>
-    <p class="sub">Issuing a loan adds a "Loan" entry to DataLog for that member — it'll immediately start accruing interest. Rules: B2S-only members cannot take loans, and a member's loan total may not exceed ${loanCapPct()}% of ${loanCapBasis()==='paid'?'what they have contributed so far this year':'their yearly contributions (monthly amount × 12)'}. The admin can approve exceptions below.</p>
+    <p class="sub">Issuing a loan adds a "Loan" entry to DataLog — it'll immediately start accruing interest. B2S-only members cannot take loans unless an exception is approved. A member's loan total may not exceed ${loanCapPct()}% of ${loanCapBasis()==='paid'?'contributions paid so far this year':'yearly contributions (monthly × 12)'}.</p>
     <div class="grid g4">
       <div><label>Member <span class="req">*</span></label><select id="lnMember"><option value="">Select member…</option>${memberOptions()}</select></div>
       <div><label>Amount <span class="req">*</span></label><input type="number" id="lnAmount" min="0" step="0.01" placeholder="0"></div>
       <div><label>Date issued</label><input type="date" id="lnDate" value="${todayISO()}"></div>
       <div><label>Notes <span class="hint">optional</span></label><input type="text" id="lnNotes" placeholder="e.g. school fees"></div>
     </div>
-    <div class="btnrow" style="margin-top:14px"><button class="btn" id="addLoanBtn">${icon('plus',15)} Record loan</button></div>
+    <div class="btnrow" style="margin-top:14px">
+      <button class="btn" id="addLoanBtn">${icon('plus',15)} Record loan</button>
+      <button class="btn secondary" id="cancelNewLoanBtn">Cancel</button>
+    </div>
   </div>
+  </div>` : ''}
 
   ${loanExceptionsCardHtml()}
-  <div class="grid g3" style="margin-bottom:18px">
-    <div class="kpi"><div class="v">${rows.length}</div><div class="l">Members with an open loan</div></div>
-    <div class="kpi"><div class="v">${fmtR(totalOut)}</div><div class="l">Total principal outstanding</div></div>
-    <div class="kpi"><div class="v">${fmtR(totalInt)}</div><div class="l">Total interest accrued (unpaid)</div></div>
-  </div>
-  <div class="card">
-    <h2><span class="dot"></span>Open loans</h2>
-    <p class="sub">Interest = ${Math.round((state.settings.intRate||0)*100)}% of the outstanding balance, counted from the month the loan was taken, non-compounding — minus interest already paid since then.</p>
-    ${rows.length===0 ? `<div class="empty">No members currently owe a loan balance.</div>` : `
-    <div class="tablewrap"><table>
-      <thead><tr><th>Member</th><th class="num">Principal Outstanding</th><th class="num">Interest Accrued</th>
-      <th class="num">Interest Paid</th><th class="num">Total Owing</th></tr></thead>
+
+  ${rows.length===0 ? `<div class="card"><div class="empty">${loanStatusFilter==='settled'?'No settled loans.':loanMemberFilter?'No loans for this member.':'No loans recorded.'}</div></div>` :
+    rows.map(r => {
+      const loanEntries = currentEntriesFor(r.member.full).filter(e => Number(e.taken) > 0);
+      const firstLoan = loanEntries.length ? loanEntries.reduce((a,b)=>new Date(a.date)<new Date(b.date)?a:b) : null;
+      const startLabel = firstLoan ? new Date(firstLoan.date).toLocaleDateString('en-ZA',{month:'long',year:'numeric'}) : '—';
+      const monthsSince = firstLoan ? (() => {
+        const fi = fiscalIndex(firstLoan.month); const ni = fiscalIndex(MONTHS[(state.settings.monthsElapsed||1)-1]||MONTHS[0]);
+        return Math.max(ni - fi + 1, 1);
+      })() : 0;
+      const intPaidMonths = currentEntriesFor(r.member.full).filter(e => Number(e.intPay) > 0).length;
+      const missed = Math.max(monthsSince - intPaidMonths, 0);
+      const isOpen = loanExpandOpen[r.member.full];
+      const isSettled = r.loanBalance <= 0.5 && r.interestAccrued <= 0.5;
+      return `<div class="loan-card">
+        <div class="loan-card-header">
+          <div>
+            <div class="loan-card-name">${escapeHtml(r.member.full)}</div>
+            <div class="loan-card-meta">Started: ${escapeHtml(startLabel)} · ${monthsSince} month${monthsSince!==1?'s':''} · ${intRate}%/mo</div>
+          </div>
+          <div class="loan-card-actions">
+            <span class="pill ${isSettled?'gray':'green'}" style="font-size:12px">${isSettled?'settled':'active'}</span>
+            ${can('members') && !isSettled ? `
+            <button class="btn-settle" data-settleloan="${escapeHtml(r.member.full)}">${icon('calcheck',14)} Mark Settled</button>
+            <button class="btn-loan-del" data-delloan="${escapeHtml(r.member.full)}">${icon('trash',14)} Delete</button>` : ''}
+            ${can('members') && isSettled ? `<button class="btn-loan-del" data-delloan="${escapeHtml(r.member.full)}">${icon('trash',14)} Delete</button>` : ''}
+          </div>
+        </div>
+        <div class="loan-stats">
+          <div class="loan-stat">
+            <div class="ls-label">Principal</div>
+            <div class="ls-val">${fmtR(r.loanBalance)}</div>
+          </div>
+          <div class="loan-stat">
+            <div class="ls-label">Interest Paid</div>
+            <div class="ls-val">${fmtR(r.interestPaid)}</div>
+          </div>
+          <div class="loan-stat red-bg">
+            <div class="ls-label">Unpaid Interest</div>
+            <div class="ls-val">${fmtR(r.interestAccrued)}</div>
+          </div>
+          <div class="loan-stat">
+            <div class="ls-label">Penalties</div>
+            <div class="ls-val">${fmtR(r.penaltiesOwed)}</div>
+          </div>
+          <div class="loan-stat">
+            <div class="ls-label">Missed / Paid</div>
+            <div class="ls-val">${missed} / ${intPaidMonths}</div>
+          </div>
+        </div>
+        <button class="loan-expand-toggle" data-loantoggle="${escapeHtml(r.member.full)}">
+          ${icon('chev',13)} ${isOpen ? '↑ Hide' : '↓ View'} Schedule &amp; Record Payments
+        </button>
+        <div class="loan-expand${isOpen?' open':''}">
+          ${isOpen ? loanScheduleHtml(r, intRate, missed, intPaidMonths, firstLoan, monthsSince) : ''}
+        </div>
+      </div>`;
+    }).join('')
+  }`;
+}
+
+function loanScheduleHtml(r, intRate, missed, intPaidMonths, firstLoan, monthsSince){
+  const memberFull = r.member.full;
+  const entries = currentEntriesFor(memberFull);
+  const loanEntries = entries.filter(e => Number(e.taken) > 0);
+  if(!loanEntries.length) return `<p class="sub">No loan entries found.</p>`;
+
+  const principal = loanEntries.reduce((s,e) => s + Number(e.taken), 0);
+  const intRateDecimal = Number(state.settings.intRate) || 0;
+  const memberSharePct = Number(state.settings.memberShare) || 0.95;
+  const clubSharePct = Number(state.settings.clubShare) || 0.05;
+  const intPenalty = Number(state.settings.intPenalty) || 70;
+
+  const loanMonthIdxs = loanEntries.map(e => fiscalIndex(e.month)).filter(i => i > 0);
+  const firstIdx = Math.min(...loanMonthIdxs);
+  const nowIdx = Number(state.settings.monthsElapsed) || fiscalIndex(currentFiscalMonthGuess());
+
+  const intByMonth = {};
+  entries.filter(e => Number(e.intPay) > 0).forEach(e => {
+    const idx = fiscalIndex(e.month);
+    intByMonth[idx] = (intByMonth[idx] || 0) + Number(e.intPay);
+  });
+  const penByMonth = {};
+  entries.filter(e => Number(e.powng) > 0 && e.source === 'interest').forEach(e => {
+    const idx = fiscalIndex(e.month);
+    penByMonth[idx] = (penByMonth[idx] || 0) + Number(e.powng);
+  });
+
+  const schedRows = [];
+  let carriedUnpaid = 0;
+  let totalIntDue = 0, totalPaid = 0, totalPen = 0, totalUnpaidInt = 0, totalToMember = 0, totalToPool = 0;
+
+  for(let idx = firstIdx; idx <= nowIdx; idx++){
+    const calMonthNames = ['December','January','February','March','April','May','June','July','August','September','October','November'];
+    const calYearBase = Number(state.settings.yearLabel) || new Date().getFullYear();
+    const calYear = idx === 1 ? calYearBase - 1 : calYearBase;
+    const monthLabel = `${calMonthNames[idx-1]} ${calYear}`;
+
+    const intDue = principal * intRateDecimal;
+    const totalDue = intDue + carriedUnpaid;
+    const paid = intByMonth[idx] || 0;
+    const isCurrentOrFuture = idx >= nowIdx;
+    const pen = penByMonth[idx] || ((!paid && !isCurrentOrFuture) ? intPenalty : 0);
+    const unpaidInt = Math.max(totalDue - paid, 0);
+    const toMember = paid > 0 ? Math.round(paid * memberSharePct * 100) / 100 : 0;
+    const toPool = paid > 0 ? Math.round(paid * clubSharePct * 100) / 100 : 0;
+
+    const status = paid >= totalDue ? 'Paid'
+                 : idx === nowIdx ? 'Pending'
+                 : paid > 0 ? 'Partial'
+                 : 'Missed';
+
+    schedRows.push({monthLabel, intDue, carriedUnpaid, totalDue, paid, pen, unpaidInt, toMember, toPool, status});
+
+    totalIntDue += intDue; totalPaid += paid; totalPen += pen;
+    totalUnpaidInt += unpaidInt; totalToMember += toMember; totalToPool += toPool;
+
+    carriedUnpaid = unpaidInt;
+  }
+
+  const statusPill = s => {
+    if(s==='Paid') return `<span class="pill green" style="font-size:11px">Paid</span>`;
+    if(s==='Missed') return `<span class="pill red" style="font-size:11px">Missed</span>`;
+    if(s==='Partial') return `<span class="pill orange" style="font-size:11px">Partial</span>`;
+    return `<span class="pill gray" style="font-size:11px">Pending</span>`;
+  };
+
+  return `
+  <div style="margin-top:14px">
+    <div class="grid g3" style="margin-bottom:16px">
+      <div style="background:var(--panel-2);border-radius:10px;padding:12px 14px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Total Owing</div>
+        <div style="font-size:17px;font-weight:800;color:var(--red)">${fmtR(r.totalOwing)}</div>
+      </div>
+      <div style="background:var(--panel-2);border-radius:10px;padding:12px 14px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Loan Repaid</div>
+        <div style="font-size:17px;font-weight:700">${fmtR(r.loanRepaid)}</div>
+      </div>
+      <div style="background:var(--panel-2);border-radius:10px;padding:12px 14px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Interest Rate</div>
+        <div style="font-size:17px;font-weight:700">${intRate}%/month</div>
+      </div>
+    </div>
+    <p class="sub" style="margin-bottom:12px">Interest is non-compounding — ${intRate}% of the original principal (${fmtR(principal)}) per month. Record a repayment or interest payment in <b>Data Entry</b>.</p>
+    <div class="tablewrap" style="border-radius:10px;overflow:hidden;border:1px solid var(--line)">
+    <table style="margin:0;font-size:12.5px">
+      <thead style="background:var(--accent);color:#fff">
+        <tr>
+          <th style="color:#fff;border-bottom:none">Month</th>
+          <th class="num" style="color:#fff;border-bottom:none">Interest Due</th>
+          <th class="num" style="color:#fff;border-bottom:none">Carried Unpaid</th>
+          <th class="num" style="color:#fff;border-bottom:none">Total Due</th>
+          <th class="num" style="color:#fff;border-bottom:none">Paid</th>
+          <th class="num" style="color:#fff;border-bottom:none">Penalty</th>
+          <th class="num" style="color:#fff;border-bottom:none">Unpaid Int.</th>
+          <th class="num" style="color:#fff;border-bottom:none">To Member (${Math.round(memberSharePct*100)}%)</th>
+          <th class="num" style="color:#fff;border-bottom:none">To Pool (${Math.round(clubSharePct*100)}%)</th>
+          <th style="color:#fff;border-bottom:none">Status</th>
+        </tr>
+      </thead>
       <tbody>
-        ${rows.sort((a,b)=>b.totalOwing-a.totalOwing).map(r => `<tr>
-          <td>${escapeHtml(r.member.full)}</td>
-          <td class="num">${fmtR(r.loanBalance)}</td>
-          <td class="num" style="color:var(--orange)">${fmtR(r.interestAccrued)}</td>
-          <td class="num">${fmtR(r.interestPaid)}</td>
-          <td class="num" style="font-weight:700;color:var(--red)">${fmtR(r.totalOwing)}</td>
+        ${schedRows.map(row => `<tr>
+          <td style="font-weight:500">${row.monthLabel}</td>
+          <td class="num" style="color:var(--green)">${fmtR(row.intDue)}</td>
+          <td class="num" style="color:${row.carriedUnpaid>0?'var(--red)':'var(--muted)'}">${row.carriedUnpaid>0?fmtR(row.carriedUnpaid):'—'}</td>
+          <td class="num" style="font-weight:700">${fmtR(row.totalDue)}</td>
+          <td class="num">
+            ${fmtR(row.paid)}
+            ${can('members') ? `<button class="icon-btn" title="Record payment in Data Entry" data-quickpay="${escapeHtml(memberFull)}" style="display:inline-flex;width:20px;height:20px;border-radius:5px;vertical-align:middle;margin-left:3px;border:none;background:transparent;color:var(--muted)">${icon('edit',12)}</button>` : ''}
+          </td>
+          <td class="num" style="color:${row.pen>0?'var(--red)':'var(--muted)'}">${row.pen>0?fmtR(row.pen):'—'}</td>
+          <td class="num" style="color:${row.unpaidInt>0?'var(--red)':'var(--muted)'}">${row.unpaidInt>0?fmtR(row.unpaidInt):'—'}</td>
+          <td class="num" style="color:${row.toMember>0?'var(--green)':'var(--muted)'}">${row.toMember>0?fmtR(row.toMember):'—'}</td>
+          <td class="num" style="color:${row.toPool>0?'var(--green)':'var(--muted)'}">${row.toPool>0?fmtR(row.toPool):'—'}</td>
+          <td>${statusPill(row.status)}</td>
         </tr>`).join('')}
       </tbody>
-    </table></div>`}
+      <tfoot>
+        <tr style="background:var(--accent);color:#fff;font-weight:700">
+          <td>TOTALS</td>
+          <td class="num" style="color:#fff">${fmtR(totalIntDue)}</td>
+          <td></td>
+          <td></td>
+          <td class="num" style="color:#fff">${fmtR(totalPaid)}</td>
+          <td class="num" style="color:#fff">${totalPen>0?fmtR(totalPen):'—'}</td>
+          <td class="num" style="color:#fff">${totalUnpaidInt>0?fmtR(totalUnpaidInt):'—'}</td>
+          <td class="num" style="color:#fff">${totalToMember>0?fmtR(totalToMember):'—'}</td>
+          <td class="num" style="color:#fff">${totalToPool>0?fmtR(totalToPool):'—'}</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+    </div>
   </div>`;
 }
 function loanExceptionsCardHtml(){
@@ -3329,6 +3687,81 @@ function loanExceptionsCardHtml(){
 }
 
 function wireLoans(){
+  // ── Filter wiring ──────────────────────────────────────────────────
+  const statusSel = document.getElementById('loanStatusFilterSel');
+  if(statusSel) statusSel.onchange = () => { loanStatusFilter = statusSel.value; render(); };
+  const memberSel = document.getElementById('loanMemberFilterSel');
+  if(memberSel) memberSel.onchange = () => { loanMemberFilter = memberSel.value; render(); };
+  const clearBtn = document.getElementById('clearLoanFiltersBtn');
+  if(clearBtn) clearBtn.onclick = () => { loanStatusFilter = 'all'; loanMemberFilter = ''; render(); };
+
+  // ── New loan form toggle ───────────────────────────────────────────
+  const showNewLoanFormBtn = document.getElementById('showNewLoanFormBtn');
+  const newLoanForm = document.getElementById('newLoanForm');
+  if(showNewLoanFormBtn && newLoanForm){
+    showNewLoanFormBtn.onclick = () => {
+      const isVisible = newLoanForm.style.display !== 'none';
+      newLoanForm.style.display = isVisible ? 'none' : 'block';
+    };
+  }
+  const cancelNewLoanBtn = document.getElementById('cancelNewLoanBtn');
+  if(cancelNewLoanBtn && newLoanForm) cancelNewLoanBtn.onclick = () => { newLoanForm.style.display = 'none'; };
+
+  // ── Expand/collapse loan schedule ─────────────────────────────────
+  document.querySelectorAll('[data-loantoggle]').forEach(btn => btn.onclick = () => {
+    const full = btn.dataset.loantoggle;
+    loanExpandOpen[full] = !loanExpandOpen[full];
+    render();
+  });
+
+  // ── Quick-pay (navigate to data entry) ────────────────────────────
+  document.querySelectorAll('[data-quickpay]').forEach(b => b.onclick = () => {
+    state.selectedMemberFull = b.dataset.quickpay;
+    setRoute('entry');
+  });
+
+  // ── Settle loan ───────────────────────────────────────────────────
+  document.querySelectorAll('[data-settleloan]').forEach(b => b.onclick = async () => {
+    const full = b.dataset.settleloan;
+    const r = allMemberRows().find(r => r.member.full === full);
+    if(!r) return;
+    const ok = await confirmModal('Mark loan settled',
+      `Mark the loan for <b>${escapeHtml(full)}</b> as fully settled?<br><small>Remaining balance: ${fmtR(r.loanBalance)} principal + ${fmtR(r.interestAccrued)} interest.</small>`, 'Mark Settled', false);
+    if(!ok) return;
+    const date = todayISO();
+    const month = currentFiscalMonthGuessFromDate(date);
+    const rows = [];
+    if(r.loanBalance > 0.01){
+      rows.push({id: uid('d'), date: date+'T00:00:00', name: full, month, year: state.settings.yearLabel,
+        contr:0, loanRep: r.loanBalance, intPay:0, pena:0, b2s:0, funeral:0, taken:0, powng:0, source:'manual', note:'Loan settled'});
+    }
+    if(r.interestAccrued > 0.01){
+      rows.push({id: uid('d'), date: date+'T00:00:00', name: full, month, year: state.settings.yearLabel,
+        contr:0, loanRep:0, intPay: r.interestAccrued, pena:0, b2s:0, funeral:0, taken:0, powng:0, source:'manual', note:'Interest settled'});
+    }
+    if(rows.length){
+      state.datalog.push(...rows);
+      Store.persist();
+      await Store.syncTable('mk_datalog', rows, dlToDb);
+    }
+    toast(`Loan settled for ${full}.`); render();
+  });
+
+  // ── Delete loan ───────────────────────────────────────────────────
+  document.querySelectorAll('[data-delloan]').forEach(b => b.onclick = async () => {
+    const full = b.dataset.delloan;
+    const ok = await confirmModal('Delete loan entries',
+      `Delete ALL loan entries (taken, repayments, interest) for <b>${escapeHtml(full)}</b> this year? This cannot be undone.`, 'Delete', true);
+    if(!ok) return;
+    const toDelete = state.datalog.filter(e => e.name === full && (Number(e.taken)>0 || Number(e.loanRep)>0 || (Number(e.intPay)>0 && e.source==='loan')));
+    const ids = toDelete.map(e => e.id);
+    state.datalog = state.datalog.filter(e => !ids.includes(e.id));
+    Store.persist();
+    if(ids.length) await Store.deleteRows('mk_datalog', ids);
+    toast(`Loan entries deleted for ${full}.`); render();
+  });
+
+  // ── Loan exceptions ───────────────────────────────────────────────
   const addEx = document.getElementById('addExceptionBtn');
   if(addEx) addEx.onclick = () => openLoanExceptionModal('', 0);
   document.querySelectorAll('[data-revokeex]').forEach(b => b.onclick = async () => {
@@ -3338,14 +3771,16 @@ function wireLoans(){
     ex.revoked = true; ex.revokedBy = (Auth.profile && Auth.profile.email) || 'admin'; ex.revokedDate = todayISO();
     await saveSettingsCloud(); toast('Exception revoked.'); render();
   });
-  document.getElementById('addLoanBtn').onclick = async () => {
+
+  // ── Add new loan ──────────────────────────────────────────────────
+  const addLoanBtn = document.getElementById('addLoanBtn');
+  if(addLoanBtn) addLoanBtn.onclick = async () => {
     const memberFull = document.getElementById('lnMember').value;
     const amount = Number(document.getElementById('lnAmount').value) || 0;
     const date = document.getElementById('lnDate').value || todayISO();
     const notes = document.getElementById('lnNotes').value.trim();
     if(!memberFull){ toast('Select a member.', true); return; }
     if(amount <= 0){ toast('Enter a loan amount greater than 0.', true); return; }
-    const member = state.members.find(m => m.full===memberFull);
     const month = currentFiscalMonthGuessFromDate(date);
     if(!await guardLoan(memberFull, amount, 0)) return;
     const ok = await confirmModal('Record loan',
@@ -3357,6 +3792,7 @@ function wireLoans(){
     Store.persist();
     await Store.syncTable('mk_datalog', [row], dlToDb);
     toast(`Loan of ${fmtR(amount)} recorded for ${memberFull}${notes?' — '+notes:''}.`);
+    if(newLoanForm) newLoanForm.style.display = 'none';
     render();
   };
 }
@@ -3391,34 +3827,46 @@ function viewAttendance(){
   </div>
 
   <div class="card">
-    <h2><span class="dot"></span>Mark attendance <span style="color:var(--muted);font-weight:400">(${members.length} members)</span></h2>
-    <p class="sub">B2S-only members are exempt from attendance penalties and are shown greyed out.</p>
-    <div class="tablewrap"><table>
-      <thead><tr><th>#</th><th>Member</th><th>Status</th><th>Apology?</th><th>Proxy name</th><th class="num">Penalty</th></tr></thead>
-      <tbody>
-        ${members.map((m,i) => {
-          const rec = draft.statusByMember[m.full] || {status:'Present', apology:'', proxy:''};
-          const exempt = Number(m.fixed)===0;
-          const pen = exempt ? 0 : computeAttendancePenalty(m, rec.status, rec.apology);
-          return `<tr style="${exempt?'opacity:.55':''}">
-            <td>${i+1}</td><td>${escapeHtml(m.full)}${exempt?' <span class="pill gray">B2S</span>':''}</td>
-            <td><select data-att-status="${m.full}" ${exempt?'disabled':''}>
-              ${['Present','Apology','Absent','Exempted'].map(s=>`<option ${rec.status===s?'selected':''}>${s}</option>`).join('')}
-            </select></td>
-            <td><select data-att-apology="${m.full}" ${exempt?'disabled':''}>
-              <option value="" ${!rec.apology?'selected':''}>—</option>
-              <option value="Yes" ${rec.apology==='Yes'?'selected':''}>Yes</option>
-              <option value="No" ${rec.apology==='No'?'selected':''}>No</option>
-            </select></td>
-            <td><input type="text" data-att-proxy="${m.full}" value="${escapeHtml(rec.proxy)}" ${exempt?'disabled':''} placeholder="—" style="min-width:140px"></td>
-            <td class="num">${pen ? `<span class="pill red">${fmtR(pen)}</span>` : '—'}</td>
-          </tr>`;
-        }).join('')}
-        <tr class="tot-row"><td colspan="5">Total to collect for this meeting</td>
-          <td class="num">${fmtR(members.reduce((s2,m) => s2 + (Number(m.fixed)===0 ? 0 : computeAttendancePenalty(m, (draft.statusByMember[m.full]||{status:'Present'}).status, (draft.statusByMember[m.full]||{}).apology)), 0))}</td></tr>
-      </tbody>
-    </table></div>
-    <div class="btnrow" style="margin-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px">
+      <h2 style="margin:0"><span class="dot"></span>Mark attendance <span style="color:var(--muted);font-weight:400">(${members.length} members)</span></h2>
+      <span style="font-size:12.5px;color:var(--muted)">B2S &amp; OOP members are exempt — greyed out</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0 10px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.03em">
+      <span>NAME</span><span style="margin-left:auto;padding-right:4px">PENALTY</span>
+    </div>
+    <div class="att-list">
+      ${members.map((m,i) => {
+        const rec = draft.statusByMember[m.full] || {status:'Present', apology:'', proxy:''};
+        const exempt = Number(m.fixed)===0 || !!m.outOfProvince;
+        const exemptTag = Number(m.fixed)===0 ? 'B2S' : m.outOfProvince ? 'OOP' : '';
+        const pen = exempt ? 0 : computeAttendancePenalty(m, rec.status, rec.apology);
+        const st = rec.status;
+        const apol = rec.apology === 'Yes';
+        const presActive = st==='Present';
+        const apolActive = st==='Apology' || (st==='Absent' && apol);
+        const absActive = st==='Absent' && !apol;
+        const exActive = st==='Exempted';
+        return `<div class="att-row${exempt?' exempt':''}">
+          <div class="att-num">${i+1}</div>
+          <div class="att-name">
+            <div class="anm">${escapeHtml(m.full)}</div>
+            ${exemptTag ? `<div class="asub"><span class="pill gray" style="font-size:10px">${exemptTag} — exempt</span></div>` : ''}
+          </div>
+          <div class="att-btns">
+            <button class="att-btn${presActive?' active-present':''}" data-att-pick="${escapeHtml(m.full)}" data-att-val="Present" ${exempt?'disabled':''}>Present</button>
+            <button class="att-btn${apolActive?' active-apology':''}" data-att-pick="${escapeHtml(m.full)}" data-att-val="Absent+Apology" ${exempt?'disabled':''}>Absent + Apology</button>
+            <button class="att-btn${absActive?' active-absent':''}" data-att-pick="${escapeHtml(m.full)}" data-att-val="Absent" ${exempt?'disabled':''}>Absent</button>
+            <button class="att-btn${exActive?' active-exempt':''}" data-att-pick="${escapeHtml(m.full)}" data-att-val="Exempted" ${exempt?'disabled':''}>Exempt</button>
+          </div>
+          <div class="att-penalty${pen?' has-pen':''}">${pen ? fmtR(pen) : 'R 0'}</div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0 4px;border-top:1px solid var(--line);margin-top:4px">
+      <span style="font-weight:600;font-size:14px">Total to collect</span>
+      <span style="font-weight:800;font-size:16px;color:var(--red)">${fmtR(members.reduce((s2,m) => s2 + (Number(m.fixed)===0 || m.outOfProvince ? 0 : computeAttendancePenalty(m, (draft.statusByMember[m.full]||{status:'Present'}).status, (draft.statusByMember[m.full]||{}).apology)), 0))}</span>
+    </div>
+    <div class="btnrow" style="margin-top:14px">
       <button class="btn" id="applyAttendanceBtn">${icon('calcheck',15)} Apply attendance &amp; save penalties</button>
     </div>
   </div>
@@ -3446,19 +3894,13 @@ function wireAttendance(){
   document.getElementById('atNumber').onchange = e => { ensureAttDraft().number = e.target.value; };
   document.getElementById('atNotes').oninput = e => { ensureAttDraft().notes = e.target.value; };
 
-  document.querySelectorAll('[data-att-status]').forEach(el => el.onchange = () => {
-    const d = ensureAttDraft(); const key = el.dataset.attStatus;
-    d.statusByMember[key] = Object.assign({status:'Present',apology:'',proxy:''}, d.statusByMember[key], {status: el.value});
+  // Attendance button-group: data-att-pick = member full name, data-att-val = Present|Absent+Apology|Absent|Exempted
+  document.querySelectorAll('[data-att-pick]').forEach(btn => btn.onclick = () => {
+    const d = ensureAttDraft(); const key = btn.dataset.attPick; const val = btn.dataset.attVal;
+    let status = val, apology = '';
+    if(val === 'Absent+Apology'){ status = 'Apology'; apology = 'Yes'; }
+    d.statusByMember[key] = Object.assign({status:'Present',apology:'',proxy:''}, d.statusByMember[key], {status, apology});
     render();
-  });
-  document.querySelectorAll('[data-att-apology]').forEach(el => el.onchange = () => {
-    const d = ensureAttDraft(); const key = el.dataset.attApology;
-    d.statusByMember[key] = Object.assign({status:'Present',apology:'',proxy:''}, d.statusByMember[key], {apology: el.value});
-    render();
-  });
-  document.querySelectorAll('[data-att-proxy]').forEach(el => el.oninput = () => {
-    const d = ensureAttDraft(); const key = el.dataset.attProxy;
-    d.statusByMember[key] = Object.assign({status:'Present',apology:'',proxy:''}, d.statusByMember[key], {proxy: el.value});
   });
 
   document.getElementById('applyAttendanceBtn').onclick = async () => {
