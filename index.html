@@ -283,7 +283,7 @@
 <body>
 <div id="toasts"></div>
 <div id="app"></div>
-<script id="seed-data" type="application/json">{"members": [], "datalog": [], "settings": {"clubName": "Your Club", "clubShort": "YC", "intRate": 0.2, "memberShare": 0.95, "clubShare": 0.05, "monthsElapsed": 10, "yearLabel": 2026, "b2sCount": 0, "activeCount": 0, "late": 50, "t1": 150, "t2": 200, "t3": 300, "intPenalty": 70, "noIntPool": 200, "attApology": 100, "attNoApol": 200, "attProxy": 200, "t1Cutoff": 1000, "t2Cutoff": 2000, "bankInterest": 0, "functionFundCost": 0, "applyPenaltyShare": "NO", "bankSignatories": [], "dueOnTimeDay": 4, "dueLateDay": 10, "noPenaltyMonth": "Dec"}, "attMeeting": {"date": "", "number": 1, "notes": ""}}</script>
+<script id="seed-data" type="application/json">{"members": [], "datalog": [], "settings": {"clubName": "Your Club", "clubShort": "YC", "intRate": 0.2, "memberShare": 0.95, "clubShare": 0.05, "monthsElapsed": 10, "yearLabel": 2026, "b2sCount": 0, "activeCount": 0, "late": 50, "t1": 150, "t2": 200, "t3": 300, "intPenalty": 100, "noIntPool": 200, "attApology": 100, "attNoApol": 200, "attProxy": 200, "t1Cutoff": 1000, "t2Cutoff": 2000, "bankInterest": 0, "functionFundCost": 0, "applyPenaltyShare": "NO", "bankSignatories": [], "dueOnTimeDay": 4, "dueLateDay": 10, "noPenaltyMonth": "Dec"}, "attMeeting": {"date": "", "number": 1, "notes": ""}}</script>
 <script src="config.js"></script>
 <script>
 
@@ -1178,7 +1178,7 @@ const Auth = {
   isCapture(){ return this.role() === 'capture'; },
   isMember(){ return this.role() === 'member'; },
   isAuditor(){ return this.role() === 'auditor'; },
-  isExecAuditor(){ return this.role() === 'exec_auditor'; },   // member-only auditor: exec members, no bank audit
+  isExecAuditor(){ return false; }, // retired role — kept to avoid errors in older data
   isViewer(){ return this.role() === 'viewer'; },
   canManage(){ return this.isAdmin(); },                       // members, bulk, resign, new year, settings, users
   canCapture(){ return this.isAdmin() || this.isCapture(); },  // data entry, attendance, add loan
@@ -1588,20 +1588,20 @@ function missedTierInfo(member){
 // Specific wording for each kind of penalty
 function reasonMissedPaid(member, contr, payDate, month){
   const t = missedTierInfo(member);
-  return `Contribution for ${month||'the month'} (${fmtR(contr)}) paid on ${dayMonth(payDate)} — after the deadline (the ${ordDay(dueLateDay())} of the following month), counted as missed: ${t.name}, ${fmtR(t.amount)}`;
+  return `${month||'the month'} contribution (${fmtR(contr)}) paid ${dayMonth(payDate)} — missed: ${fmtR(t.amount)}`;
 }
 function reasonLatePaid(contr, payDate, month){
-  return `Contribution for ${month||'the month'} (${fmtR(contr)}) paid on ${dayMonth(payDate)} — between the ${ordDay(dueOnTimeDay()+1)} and ${ordDay(dueLateDay())} of the following month, late: ${fmtR(state.settings.late)}`;
+  return `${month||'the month'} contribution (${fmtR(contr)}) paid ${dayMonth(payDate)} — late: ${fmtR(state.settings.late)}`;
 }
 function reasonMissedSweep(member, month, today){
   const t = missedTierInfo(member);
-  return `No contribution received for ${month} by ${dayMonth(today)} — the deadline (${ordDay(dueLateDay())} of the following month) has passed, counted as missed: ${t.name}, ${fmtR(t.amount)}`;
+  return `${month} — no contribution by ${dayMonth(today)}, missed: ${fmtR(t.amount)}`;
 }
 function reasonLateSweep(month, today){
-  return `No contribution received for ${month} by ${dayMonth(today)} — past the ${ordDay(dueOnTimeDay())} of the following month, late: ${fmtR(state.settings.late)}`;
+  return `${month} — no contribution by ${dayMonth(today)}, late: ${fmtR(state.settings.late)}`;
 }
 function reasonInterest(month, loanBalance){
-  return `No interest paid for ${month} by the deadline (${ordDay(dueLateDay())} of the following month) while a loan of ${fmtR(loanBalance)} was outstanding — ${fmtR(state.settings.intPenalty)}`;
+  return `${month} interest not paid (loan: ${fmtR(loanBalance)}) — ${fmtR(state.settings.intPenalty)}`;
 }
 
 // ---- When is a month's contribution on time? --------------------------------
@@ -3541,7 +3541,7 @@ function loanScheduleHtml(r, intRate, missed, intPaidMonths, firstLoan, monthsSi
   const intRateDecimal = Number(state.settings.intRate) || 0;
   const memberSharePct = Number(state.settings.memberShare) || 0.95;
   const clubSharePct = Number(state.settings.clubShare) || 0.05;
-  const intPenalty = Number(state.settings.intPenalty) || 70;
+  const intPenalty = Number(state.settings.intPenalty) || 100;
 
   const loanMonthIdxs = loanEntries.map(e => fiscalIndex(e.month)).filter(i => i > 0);
   const firstIdx = Math.min(...loanMonthIdxs);
@@ -5196,9 +5196,9 @@ function inferPenaltyReason(d){
   const tier = m ? missedTierInfo(m).amount : null;
   const late = Number(s.late), intP = Number(s.intPenalty);
   const eq = (a,b) => b !== null && Math.abs(a-b) < 0.005;
-  const missedTxt = () => swept ? reasonMissedSweep(m, d.month, d.date) : (contr ? reasonMissedPaid(m, contr, d.date, d.month) : `Contribution for ${d.month} counted as missed (after the ${ordDay(dueLateDay())} of the following month), ${fmtR(tier)}`);
-  const lateTxt = () => swept ? reasonLateSweep(d.month, d.date) : (contr ? reasonLatePaid(contr, d.date, d.month) : `Contribution for ${d.month} was late (${ordDay(dueOnTimeDay()+1)}–${ordDay(dueLateDay())} of the following month), ${fmtR(late)}`);
-  const intTxt = () => `No interest paid for ${d.month} by the deadline (${ordDay(dueLateDay())} of the following month) while a loan was outstanding — ${fmtR(intP)}`;
+  const missedTxt = () => swept ? reasonMissedSweep(m, d.month, d.date) : (contr ? reasonMissedPaid(m, contr, d.date, d.month) : `${d.month} — missed: ${fmtR(tier)}`);
+  const lateTxt = () => swept ? reasonLateSweep(d.month, d.date) : (contr ? reasonLatePaid(contr, d.date, d.month) : `${d.month} — late: ${fmtR(late)}`);
+  const intTxt = () => `${d.month} interest not paid (loan outstanding) — ${fmtR(intP)}`;
   if(m){
     if(eq(amt, tier)) return missedTxt();
     if(eq(amt, late)) return lateTxt();
@@ -6343,7 +6343,7 @@ function viewBankAudit(){
       <div><label>Notice Acct Transfer (R)</label><input type="number" id="btNotice" value="0"></div>
       <div><label>Misc Description</label><input type="text" id="btMiscDesc" placeholder="e.g. Venue fee"></div>
       <div><label>Misc Amount (R)</label><input type="number" id="btMiscAmt" value="0"></div>
-      <div><label>Petrol (R)</label><input type="number" id="btPetrol" value="200"></div>
+      <div><label>Petrol (R)</label><input type="number" id="btPetrol" value="300"></div>
       <div style="grid-column:span 2"><label>Notes</label><input type="text" id="btNotes"></div>
     </div>
     <div class="btnrow" style="margin-top:14px"><button class="btn" id="addTripBtn">${icon('plus',15)} Log visit</button></div>
